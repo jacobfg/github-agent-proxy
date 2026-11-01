@@ -1,0 +1,73 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "enabledManagers": [
+    "cargo",
+    "dockerfile",
+    "rust-toolchain",
+    "custom.regex"
+  ],
+  "dependencyDashboard": true,
+  "automerge": false,
+  "prConcurrentLimit": 1,
+  "prHourlyLimit": 1,
+  "separateMinorPatch": false,
+  "packageRules": [
+    {
+      "description": "One application maintenance PR for minor and patch releases",
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "application dependencies",
+      "groupSlug": "application-dependencies"
+    },
+    {
+      "description": "Leave pins, digests, replacements, and rollbacks for manual maintenance",
+      "matchUpdateTypes": [
+        "pin",
+        "digest",
+        "pinDigest",
+        "replacement",
+        "rollback",
+        "bump"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Show major upgrades in the dashboard and wait for approval",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^README\\.md$/"
+      ],
+      "matchStrings": [
+        "Requires Rust (?<currentValue>\\d+\\.\\d+\\.\\d+)\\+"
+      ],
+      "depNameTemplate": "rust",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "semver-coerced"
+    }
+  ],
+  "labels": [
+    "dependencies",
+    "bot"
+  ],
+  "baseBranchPatterns": [
+    "main"
+  ],
+  "groupSingleUpdates": true,
+  "ignoreUnstable": true,
+  "logLevelRemap": [
+    {
+      "matchMessage": "/^Error updating branch$/",
+      "newLogLevel": "error"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+[package]
+name = "github-agent-proxy"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+description = "Reverse proxy enforcing fine-grained write policy for coding agents using gh and git"
+repository = "https://github.com/jacobfg/github-agent-proxy"
+
+[lib]
+name = "github_agent_proxy"
+path = "src/lib.rs"
+
+[[bin]]
+name = "github-agent-proxy"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+bytes = "1"
+clap = { version = "4", features = ["derive", "env"] }
+flate2 = "1"
+graphql-parser = "0.4"
+http = "1"
+http-body-util = "0.1"
+moka = { version = "0.12", features = ["future"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+rustls = "0.23" # direct dep so main() can install the aws-lc-rs CryptoProvider
+rustls-pemfile = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tower-http = { version = "0.6", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+rcgen = "0.13"
+tempfile = "3"
+wiremock = "0.6"

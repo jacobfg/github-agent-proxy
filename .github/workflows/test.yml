@@ -1,0 +1,34 @@
+name: Test
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - uses: extractions/setup-just@v4
+        with:
+          just-version: '1.58.0'
+      - run: just verify
+      - uses: docker/setup-buildx-action@v3
+      - run: docker buildx build --platform linux/amd64,linux/arm64 --output type=oci,dest=/tmp/gap-images.tar .
+      - run: docker buildx build --platform linux/amd64 --load -t gap-smoke .
+      - run: |
+          docker run --name gap-smoke -d -p 127.0.0.1:8443:8443 \
+            -e GAP_GITHUB_TOKEN=dummy \
+            -e GAP_OWNER_LOGIN=smoke-bot \
+            -e GAP_ALLOWED_ORGS=myorg \
+            gap-smoke
+          for i in $(seq 1 30); do
+            if docker exec gap-smoke /github-agent-proxy healthcheck; then break; fi
+            sleep 1
+          done
+          ./scripts/smoke.sh http://127.0.0.1:8443
+      - if: always()
+        run: docker rm -f gap-smoke || true
