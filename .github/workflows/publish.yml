@@ -9,11 +9,11 @@ permissions:
   contents: read
 
 jobs:
-  publish:
+  validate:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      image: ${{ steps.release.outputs.image }}
     steps:
       - name: Check out the tagged commit
         uses: actions/checkout@v6
@@ -38,6 +38,27 @@ jobs:
           printf 'version=%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           printf 'image=ghcr.io/%s\n' "${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
+  # One native runner per architecture: the builder stage compiles for its own
+  # host target, so emulated builds would mislabel the binary's architecture.
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -48,18 +69,85 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and publish multi-architecture image
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ steps.release.outputs.image }}:latest
-            ${{ steps.release.outputs.image }}:${{ steps.release.outputs.version }}
+          platforms: ${{ matrix.platform }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.release.outputs.version }}
-          cache-from: type=gha,scope=release-image
-          cache-to: type=gha,mode=max,scope=release-image
+            org.opencontainers.image.version=${{ needs.validate.outputs.version }}
+          outputs: type=image,name=${{ needs.validate.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=release-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.arch }}
+
+      # Guards the mistake this job layout exists to prevent: a binary built
+      # for one architecture published under another's manifest. The image
+      # only executes here if its binary matches this native runner.
+      - name: Verify the image executes on its native runner
+        shell: bash
+        env:
+          IMAGE: ${{ needs.validate.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: docker run --rm "$IMAGE@$DIGEST" --version
+
+      - name: Record digest
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Combine the per-arch images into one multi-arch tag.
+  merge:
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push the manifest list
+        shell: bash
+        working-directory: /tmp/digests
+        env:
+          IMAGE: ${{ needs.validate.outputs.image }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          docker buildx imagetools create \
+            -t "$IMAGE:$VERSION" \
+            -t "$IMAGE:latest" \
+            $(printf "$IMAGE@sha256:%s " *)
+
+      - name: Show the published manifest
+        env:
+          IMAGE: ${{ needs.validate.outputs.image }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: docker buildx imagetools inspect "$IMAGE:$VERSION"

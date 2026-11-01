@@ -130,7 +130,9 @@ touched):
 GAP_SPIKE_REPO=owner/empty-test-repo ./scripts/spike.sh
 ```
 
-CI (GitHub Actions): `just verify` on every push/PR, then a multi-arch buildx build and a container smoke test. Tag `X.Y.Z` (no `v` prefix) publishes multi-arch images to GHCR. Renovate runs self-hosted on a schedule (needs the `RENOVATE_TOKEN` repo secret).
+CI (GitHub Actions): `just verify` on every push/PR, plus an image build and container smoke test on a native runner per architecture. Tag `X.Y.Z` (no `v` prefix) builds each arch natively and merges them into one multi-arch tag on GHCR. Renovate runs self-hosted on a schedule (needs the `RENOVATE_TOKEN` repo secret).
+
+The builder stage compiles for its own host target, so images are never built under emulation — each architecture is built on its own runner and the manifests are merged. Building `linux/arm64` on an amd64 runner would otherwise publish an amd64 binary under the arm64 manifest.
 
 ## Design docs
 

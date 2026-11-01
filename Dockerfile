@@ -1,7 +1,12 @@
 # syntax=docker/dockerfile:1
 ARG RUST_VERSION=1.99
 
-FROM --platform=$BUILDPLATFORM rust:${RUST_VERSION}-alpine AS build
+# No --platform here on purpose: cargo builds for the host target, so the
+# builder must run on the TARGET platform or the binary's architecture would
+# not match the image's. CI builds each arch on a native runner (see
+# .github/workflows/publish.yml) and merges the manifests, so this never runs
+# under emulation.
+FROM rust:${RUST_VERSION}-alpine AS build
 ARG TARGETARCH
 WORKDIR /build
 RUN apk add --no-cache musl-dev
