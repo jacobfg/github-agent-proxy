@@ -3,3 +3,4 @@
 .omc/
 *.pem
 .claude/
+.pack_update_marker
