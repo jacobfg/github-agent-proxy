@@ -7,7 +7,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      # rust-toolchain.toml is the single source of truth for the toolchain
+      # and its components; rustup auto-installs from it (and Renovate's
+      # rust-toolchain manager keeps it current).
+      - run: rustup show
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
