@@ -102,7 +102,7 @@ For a personal test repository such as `jacobfg/permission-test`, replace `--env
 
 The service defaults to `127.0.0.1:8443`. Port publishing requires it to listen on the container interface, so the example explicitly enables that exception inside the isolated VM and publishes **only** on host loopback. Do not use this override for a native host process. Apple Container may also expose the VM address to the host and other containers: keep untrusted workloads off the proxy's network. All clients that reach this endpoint share the configured policy; it has no separate client authentication.
 
-The image runs without root, a shell, or a writable root filesystem. The user override lets it read host-owned `0600` bind-mounted files. Stop it with `container stop github-agent-proxy`. After publication, the equivalent image name is `ghcr.io/jacobfg/github-agent-proxy2:<version>`.
+The image runs without root, a shell, or a writable root filesystem. The user override lets it read host-owned `0600` bind-mounted files. Stop it with `container stop github-agent-proxy`. After publication, the equivalent image name is `ghcr.io/jacobfg/github-agent-proxy:<version>`.
 
 ## Host networking for VPN and corporate services
 
@@ -429,7 +429,7 @@ The verification must report `server.pem: OK`. If it fails, the CA does not vali
 
 `SSL_CERT_FILE` supplies trust for `gh`'s Go HTTP client. Git needs `GIT_SSL_CAINFO` for the destination and `http.proxySSLCAInfo` for the separate TLS connection to an HTTPS proxy. `gh repo clone` invokes Git and needs those Git settings too. Omitting the proxy CA can produce `SSL certificate OpenSSL verify result: unable to get local issuer certificate (20)` even when the destination CA is configured correctly. Keep certificate verification enabled.
 
-Automation follows [jacobfg/fittools](https://github.com/jacobfg/fittools):
+Automation
 
 - Push/PR CI runs tests with the race detector, `go vet`, formatting checks, and an amd64/arm64 image build.
 - A stable version tag such as `0.1.0` must point to a commit on `main`. The publish job reruns tests, then publishes version and `latest` tags to GHCR.
