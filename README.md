@@ -1,8 +1,8 @@
 # GitHub agent proxy
 
-A Go proxy that keeps a fine-grained GitHub PAT outside a coding agent's environment and applies a narrower write policy. Normal `gh` and `git` commands use a local TLS endpoint. Client credentials are discarded; the proxy injects its own token only into requests to fixed GitHub upstreams.
+A Go proxy that keeps a fine-grained GitHub PAT outside a coding agent's environment and applies a narrower write policy. Normal `gh` and `git` commands use a local TLS endpoint. For GitHub, client credentials are discarded and the proxy injects its own token only into requests to fixed GitHub upstreams. Other HTTPS destinations use opaque CONNECT tunnels: their TLS, credentials, streaming, and HTTP/2 remain end-to-end.
 
-Reads have no repository-owner, author, or branch restrictions. GitHub still applies the PAT's own permissions. Writes are denied unless explicitly supported below.
+GitHub reads have no repository-owner, author, or branch restrictions. GitHub still applies the PAT's own permissions. GitHub writes are denied unless explicitly supported below.
 
 ## Policy
 
@@ -51,7 +51,7 @@ just policy jacobfg/permission-test User
 just policy your-org/repo Organization
 ```
 
-`test`, `test-shell`, and `policy` use no real credentials. `test-live` mounts the private directory, configures Git TLS trust and the GitHub-scoped HTTP proxy, checks proxy readiness, and opens an interactive shell. Exiting that shell stops the temporary proxy and removes the container. Its commands contact real GitHub; use your disposable test repository. This combined container is a development environment with access to the mounted PAT.
+`test`, `test-shell`, and `policy` use no real credentials. `test-live` mounts the private directory, configures Git TLS trust and the shared HTTPS proxy, checks proxy readiness, and opens an interactive shell. Exiting that shell stops the temporary proxy and removes the container. Its commands contact real GitHub; use your disposable test repository. This combined container is a development environment with access to the mounted PAT.
 
 Recipes build their images before running them so source changes take effect. To rebuild without starting anything, use `just build` or `just test-build`. To apply new settings to the named proxy, use `just stop`, `just remove`, then `just run`. `just certs` regenerates the certificate pair, so restart the proxy after using it. Shell environment variables override `.env`; the optional settings in `.env.example` include the private directory, image names, container name, and host port. A custom host port also requires updating the host CLI proxy URL.
 
@@ -104,9 +104,40 @@ The service defaults to `127.0.0.1:8443`. Port publishing requires it to listen 
 
 The image runs without root, a shell, or a writable root filesystem. The user override lets it read host-owned `0600` bind-mounted files. Stop it with `container stop github-agent-proxy`. After publication, the equivalent image name is `ghcr.io/jacobfg/github-agent-proxy2:<version>`.
 
+## Host networking for VPN and corporate services
+
+Apple Container does not necessarily inherit the Mac's VPN or per-application
+network access. A hostname can resolve inside the VM while TCP connections time
+out. In that case non-GitHub CONNECT requests return 502. For example, Claude's
+`apiKeyHelper` may report only `authentication failed` when it cannot contact its
+gateway through the container, even though its saved credentials are valid.
+
+Run the same proxy natively from a trusted operator shell to use the Mac's network:
+
+```sh
+just stop         # Release port 8443 if the Apple Container proxy is running
+just host-start   # Build and launch the native proxy; also restarts it after edits
+just host-logs    # Check startup; Ctrl-C stops following logs, not the proxy
+just host-stop   # Stop the native proxy
+```
+
+This requires Go, Python 3, and a logged-in macOS GUI session. `host-start` installs
+the executable, launchd configuration, and logs in `PROXY_PRIVATE`, alongside the
+existing token file and TLS keys. The launchd configuration contains the token's
+file path, never the token itself. Keep the whole directory inaccessible to the
+agent; do not run a privileged proxy from an agent-writable build directory.
+The proxy still binds only to `127.0.0.1`, with the same TLS and GitHub policy.
+
+The launchd job survives terminal closure and restarts after crashes. Run
+`just host-start` again after logout/reboot; no login-startup entry is installed.
+Only one proxy can own the port. To return to Apple Container, run `just host-stop`
+then `container start github-agent-proxy` (or recreate it with `just run`).
+The sandbox proxy settings and strict network profile work with either mode.
+Do not add a gateway to `NO_PROXY` to work around a container routing failure.
+
 ## One-time agent CLI setup
 
-Keep the agent's GitHub identity as `github.com`. Git uses an HTTP proxy setting scoped to that host; SSH URLs are rewritten to GitHub HTTPS URLs. `gh` uses the `HTTPS_PROXY` environment variable. Both use HTTPS CONNECT to the same local service, which terminates TLS locally, applies the policy, and opens a separate verified TLS connection to GitHub. This preserves repository detection for commands such as `gh repo view` without an explicit repository argument.
+Keep the agent's GitHub identity as `github.com`. Git and `gh` use the shared `HTTPS_PROXY` environment variable; the explicit Git setting below also works. Rewrite SSH URLs to GitHub HTTPS URLs. For these two GitHub destinations, the proxy terminates TLS, applies the policy, and opens a separate verified TLS connection to GitHub. This preserves repository detection for commands such as `gh repo view` without an explicit repository argument.
 
 In the trusted shell, copy **only the public CA certificate** into a directory visible to the agent:
 
@@ -114,6 +145,9 @@ In the trusted shell, copy **only the public CA certificate** into a directory v
 AGENT_CONFIG="$HOME/.config/github-agent-cli"
 mkdir -p "$AGENT_CONFIG"
 cp "$(mkcert -CAROOT)/rootCA.pem" "$AGENT_CONFIG/proxy-ca.pem"
+# macOS system roots; on Debian/Alpine use /etc/ssl/certs/ca-certificates.crt.
+cat /etc/ssl/cert.pem "$AGENT_CONFIG/proxy-ca.pem" > "$AGENT_CONFIG/ca-bundle.pem"
+# Include your corporate public CA bundle too, if required by your network.
 ```
 
 Set these values in the agent's shell/profile. The certificate path must exist in the agent environment. On macOS, `mkcert -install` also establishes system trust; `SSL_CERT_FILE` supplies the CA for Go clients on Linux.
@@ -125,10 +159,14 @@ export GH_CONFIG_DIR="$HOME/.config/github-agent-cli/gh"
 export GH_PROMPT_DISABLED=1
 export HTTPS_PROXY=https://127.0.0.1:8443
 export https_proxy="$HTTPS_PROXY"
-export NO_PROXY=localhost,127.0.0.1,::1,.githubusercontent.com,codeload.github.com
-export no_proxy="$NO_PROXY"
-export SSL_CERT_FILE="$HOME/.config/github-agent-cli/proxy-ca.pem"
+export HTTP_PROXY="$HTTPS_PROXY" http_proxy="$HTTPS_PROXY"
+export ALL_PROXY="$HTTPS_PROXY" all_proxy="$HTTPS_PROXY"
+export NO_PROXY= no_proxy=
+export SSL_CERT_FILE="$HOME/.config/github-agent-cli/ca-bundle.pem"
 export GIT_SSL_CAINFO="$SSL_CERT_FILE"
+export CURL_HOME="$HOME/.config/github-agent-cli/curl"
+mkdir -p "$CURL_HOME"
+printf 'proxy-cacert = "%s"\n' "$SSL_CERT_FILE" > "$CURL_HOME/.curlrc"
 unset GH_HOST GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN SSH_AUTH_SOCK
 
 # Run these in the agent's own Git configuration, not a shared operator profile.
@@ -144,7 +182,11 @@ If you used the earlier localhost URL rewrites, remove their `url` sections from
 
 Use a fresh agent home/config with no real tokens, credential helpers containing real credentials, SSH keys, browser sessions, or access to the operator's keychain. A placeholder environment variable alone does not remove stored credentials. Keep the PAT, TLS private key, mkcert CA private key, container control socket, and proxy configuration inaccessible to the agent. The proxy cannot provide this isolation for a process with the operator's filesystem privileges.
 
-The CONNECT endpoint accepts only `api.github.com:443` and `github.com:443`. GitHub's signed asset/archive redirects bypass it via `NO_PROXY`; the PAT is never injected into those destinations. If other tools share the shell, scope `HTTPS_PROXY` to the agent's GitHub tooling or add their destinations to `NO_PROXY`. GitHub Enterprise and non-GitHub upstreams are not supported.
+The CONNECT endpoint intercepts `api.github.com:443` and `github.com:443`, including case and trailing-dot variants. Those hosts on other ports are denied. Every other destination is connected directly by the proxy, which resolves its hostname and relays bytes without reading or modifying its TLS. The PAT and outer proxy authentication headers are never added to those tunnels. This includes GitHub asset/archive redirects and non-GitHub services. GitHub Enterprise uses ordinary forwarding and has no PAT injection or write policy.
+
+Non-GitHub CONNECT targets may use any TCP port, including HTTPS services on ports such as 6443. CONNECT is a byte tunnel, not an application-layer HTTPS validator: a client can carry other TCP protocols through it. UDP/QUIC and ordinary HTTP forward requests are not supported. The proxy does not inherit upstream proxy environment variables. Private/VPN destinations must be reachable from the proxy's own host/container network.
+
+Use a CA bundle containing the public mkcert root **and** the usual system/corporate roots. Trusting only mkcert is insufficient for other end-to-end HTTPS destinations. Some clients need their own proxy configuration; programs that ignore the environment fail closed under the network policy below.
 
 The examples assume the CLIs run on the Mac host or share its network namespace. Inside a separate agent VM/container, `127.0.0.1` names that VM: arrange a trusted loopback tunnel to the host proxy instead of publishing it on the LAN.
 
@@ -172,7 +214,72 @@ curl --noproxy '*' --silent --output /dev/null --write-out '%{http_code}\n' \
   -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/user
 ```
 
-Public reads may still work directly without credentials. Authenticated writes cannot bypass the proxy unless the agent obtains another credential. GitHub repository rules, PAT permissions, and server-side hooks remain in force even when the proxy allows a request. Branch writes can trigger repository automation: configure that automation's permissions and secrets for the agent branch namespace accordingly.
+Without the optional network restriction below, public reads may still work directly without credentials. Authenticated writes cannot bypass the proxy unless the agent obtains another credential. GitHub repository rules, PAT permissions, and server-side hooks remain in force even when the proxy allows a request. Branch writes can trigger repository automation: configure that automation's permissions and secrets for the agent branch namespace accordingly.
+
+## Query the running proxy
+
+The local TLS endpoint provides two read-only diagnostics. Use `--noproxy '*'`
+to contact the proxy itself, including from a proxy-only sandbox:
+
+```sh
+curl --noproxy '*' --fail --silent --show-error https://127.0.0.1:8443/status | jq
+curl --noproxy '*' --fail --silent --show-error https://127.0.0.1:8443/healthz
+```
+
+Use your configured CA bundle (or `--cacert /path/to/ca-bundle.pem`) if the local
+CA is not in the client's default trust store. No Authorization header is needed.
+
+`GET /status` returns the running process's loaded settings, for example:
+
+```json
+{
+  "allowed_orgs": ["acme"],
+  "allowed_users": ["bot"],
+  "branch_prefix": "agent/",
+  "token_owner": "bot",
+  "listen_addr": "127.0.0.1:8443",
+  "max_push_bytes": 1073741824,
+  "github_reads": "unfiltered",
+  "github_writes": "default-deny",
+  "non_github_https": "tunnel"
+}
+```
+
+The allowlists are sorted; empty lists are `[]`. The response excludes the PAT,
+TLS private keys, and filesystem paths. These are the proxy's policy settings,
+not the PAT's effective GitHub permissions or organisation approvals. Editing an
+environment variable or token file does not change the active process; restart
+it to load changes. In container mode `listen_addr` describes the container's
+listener, rather than its published host port.
+
+`GET /healthz` returns HTTP 200 with `{"status":"ok"}` while the proxy is running,
+and HTTP 503 with `{"status":"shutting_down"}` during shutdown. This is a local
+liveness check: it does not contact GitHub or verify current PAT access. Startup
+still resolves the PAT identity before opening the listener.
+
+Both endpoints support `HEAD`, reject other methods with HTTP 405, and disable
+response caching. They apply to local hostnames only; GitHub requests to paths
+named `/status` or `/healthz` continue upstream. They share the existing local
+listener's access boundary, so anyone able to reach that listener can read them.
+
+## Enforce proxy-only networking with Safehouse
+
+Proxy environment variables route cooperative clients. A Seatbelt profile enforces the boundary even when a process clears them. Append this **after** the other Safehouse profiles:
+
+```scheme
+(deny network*)
+(deny network-outbound (require-not (remote tcp4 "localhost:8443")))
+(deny network-bind network-inbound (local ip) (local unix-socket))
+(deny system-socket)
+(deny mach-lookup (global-name "com.apple.dnssd.service"))
+(allow network-outbound (remote tcp4 "localhost:8443"))
+```
+
+Seatbelt requires `localhost` in this expression; `tcp4` limits the exception to IPv4 loopback. Configure clients with `https://127.0.0.1:8443` and empty `NO_PROXY`/`no_proxy`. The final policy denies direct TCP, UDP (including UDP to port 8443), IPv6, UNIX socket connections, and local listening sockets. Run the proxy outside this sandbox. Existing shells must be restarted to receive a new policy.
+
+Remove Docker/Colima permissions and other host execution/relay services. This is a socket restriction, not a complete audit of macOS IPC: any separately permitted host service capable of making requests on the agent's behalf must also be constrained. Do not pass pre-opened network sockets into the sandbox or let untrusted code change the launcher/profile. Destination DNS resolution for CONNECT happens in the proxy.
+
+The companion `agent-safehouse-custom/run-in-sandbox` installs shared proxy variables and this final profile; it uses the real `gh` directly, without a wrapper. Tools that need to listen locally (dev servers, OAuth callbacks), use raw UDP, or connect directly will fail under this strict profile.
 
 ## Configuration
 
@@ -211,10 +318,11 @@ Tests cover write allow/deny decisions, authorship, GraphQL aliases/fragments/de
 
 ### Test inventory
 
-The regular suite uses fixed fixtures; exporting your allowlists does not change those fixtures. No test calls live GitHub. API metadata and write responses are mocked; CLI integration tests execute real binaries and use a real local Git backend.
+The regular suite uses fixed fixtures; exporting your allowlists does not change those fixtures. No test calls live GitHub. API metadata and write responses are mocked; CLI integration tests execute real binaries and use a real local Git backend. Forwarding tests use local TLS servers with independent certificates; they never call external destinations.
 
 | Test | Coverage |
 | --- | --- |
+| `TestLocalStatus`, `TestLocalHealthAndMethods`, `TestDiagnosticsDoNotShadowGitHub` | Active policy without secrets, local health/shutdown, method restrictions, no upstream calls, GitHub routing preserved |
 | `TestConfiguration` | Required credentials/TLS/prefix, default settings, loopback binding, invalid push limits |
 | `TestOwnerAllowlistConfiguration` | Organisations only, users only, both, neither, empty entries, login normalization |
 | `TestOwnerAllowlists` | REST, GraphQL, and pushes under each owner-list combination; wrong account types; author and branch restrictions |
@@ -223,7 +331,8 @@ The regular suite uses fixed fixtures; exporting your allowlists does not change
 | `TestPushCommands` | Create/force/delete, capability whitespace, tags, mixed refs, near-prefix names, unsupported capabilities, malformed/truncated packets, duplicate refs |
 | `TestGitCLI` | Real clone/push/force/delete for both owner types, protected-ref checks, HTTPS proxy certificate trust |
 | `TestGHCLI` | Real implicit `gh repo view` and `gh issue create`, HTTPS/SSH remote detection, REST and GraphQL commands for both owner types, accepted and rejected writes |
-| `TestHTTPSConnect` | Verified TLS interception, API/Git hosts, requests inside CONNECT, rejection of other tunnel destinations |
+| `TestHTTPSConnect` | Verified TLS interception, API/Git hosts, requests inside CONNECT, rejection of alternate GitHub ports |
+| `TestConnect*` | End-to-end HTTPS/HTTP2 streaming and credentials, original origin certificate, no proxy-header leakage, target validation, normalized GitHub interception, dial failure, buffered tunnel bytes, shutdown |
 | `TestHostAndEncodingGuards` | Unsafe hosts/URLs and compressed write rejection |
 | `TestReadRPCs` | Fetch RPC and LFS downloads allowed, LFS uploads denied |
 | `TestMetadataFailureDeniesWrites` | GraphQL errors, missing nodes, and invalid JSON deny writes before forwarding |

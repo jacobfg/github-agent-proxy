@@ -22,13 +22,15 @@ const maxJSON = 2 << 20
 var errDenied = errors.New("write is outside the configured allowlist")
 
 type Proxy struct {
-	config    Config
-	login     string
-	client    *http.Client
-	transport http.RoundTripper
-	tlsConfig *tls.Config
-	mu        sync.Mutex
-	tunnels   map[net.Conn]bool
+	config      Config
+	login       string
+	client      *http.Client
+	transport   http.RoundTripper
+	tlsConfig   *tls.Config
+	mu          sync.Mutex
+	tunnels     map[net.Conn]bool
+	closed      bool
+	dialContext func(context.Context, string, string) (net.Conn, error)
 }
 
 // New resolves the PAT identity before accepting traffic. Upstreams are fixed;
@@ -52,6 +54,7 @@ func New(ctx context.Context, c Config, tlsConfig *tls.Config) (*Proxy, error) {
 func (p *Proxy) Close() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.closed = true
 	for c := range p.tunnels {
 		_ = c.Close()
 	}
@@ -112,13 +115,16 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "github.com":
 		origin = "github.com"
 	case "localhost", "127.0.0.1", "::1":
+		if p.serveLocal(w, r) {
+			return
+		}
 		if strings.HasPrefix(path, "/git/") {
 			origin = "github.com"
 			path = strings.TrimPrefix(path, "/git")
 		} else if strings.HasPrefix(path, "/api/") {
 			path = strings.TrimPrefix(path, "/api")
 		} else {
-			http.Error(w, "use /api/ or /git/", 404)
+			http.Error(w, "use /api/, /git/, /status, or /healthz", 404)
 			return
 		}
 	default:
@@ -171,50 +177,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GitHub upstream unavailable", 502)
 	}}
 	rp.ServeHTTP(w, r)
-}
-
-// HTTPS_PROXY uses CONNECT to preserve the real GitHub URLs in gh. The tunnel
-// terminates TLS here and goes back through the same policy; it is never a relay.
-func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
-	if (r.Host != "api.github.com:443" && r.Host != "github.com:443") || p.tlsConfig == nil {
-		http.Error(w, "CONNECT target denied", 403)
-		return
-	}
-	h, ok := w.(http.Hijacker)
-	if !ok {
-		http.Error(w, "HTTP/1.1 is required", 400)
-		return
-	}
-	c, rw, err := h.Hijack()
-	if err != nil {
-		return
-	}
-	p.mu.Lock()
-	p.tunnels[c] = true
-	p.mu.Unlock()
-	defer func() { _ = c.Close(); p.mu.Lock(); delete(p.tunnels, c); p.mu.Unlock() }()
-	_ = c.SetDeadline(time.Now().Add(10 * time.Minute))
-	if _, err = rw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
-		return
-	}
-	if rw.Flush() != nil {
-		return
-	}
-	buffered := &bufferedConn{Conn: c, reader: rw.Reader}
-	tc := tls.Server(buffered, p.tlsConfig)
-	if tc.HandshakeContext(r.Context()) != nil {
-		return
-	}
-	conn := &closingConn{Conn: tc, done: make(chan struct{})}
-	l := &oneListener{conn: conn}
-	s := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, inner *http.Request) {
-		if inner.Method == http.MethodConnect || inner.Host != strings.TrimSuffix(r.Host, ":443") && inner.Host != r.Host {
-			http.Error(w, "tunnel host mismatch", 403)
-			return
-		}
-		p.ServeHTTP(w, inner)
-	}), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute}
-	_ = s.Serve(l)
 }
 
 type bufferedConn struct {

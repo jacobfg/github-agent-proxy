@@ -41,7 +41,7 @@ func run() error {
 	s := &http.Server{Addr: c.Listen, Handler: p, TLSConfig: tlsConfig, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 10 * time.Minute, WriteTimeout: 10 * time.Minute, IdleTimeout: time.Minute, MaxHeaderBytes: 64 << 10}
 	done := make(chan error, 1)
 	go func() {
-		log.Printf("GitHub policy proxy listening on https://%s", c.Listen)
+		log.Printf("HTTPS forward and GitHub policy proxy listening on https://%s", c.Listen)
 		done <- s.ListenAndServeTLS("", "")
 	}()
 	select {

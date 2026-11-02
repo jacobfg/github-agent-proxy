@@ -380,9 +380,9 @@ func TestHTTPSConnect(t *testing.T) {
 			t.Fatalf("%d %s", res.StatusCode, b)
 		}
 	}
-	if res, err := client.Get("https://example.com/"); err == nil {
+	if res, err := client.Get("https://github.com:8443/"); err == nil {
 		res.Body.Close()
-		t.Fatal("arbitrary CONNECT allowed")
+		t.Fatal("GitHub on an alternate port allowed")
 	}
 	r, _ := http.NewRequest("POST", "https://api.github.com/repos/acme/repo/issues", strings.NewReader(`{"title":"hello"}`))
 	r.Header.Set("Content-Type", "application/json")

@@ -45,6 +45,51 @@ run: _check-private build
       --env TLS_CERT_FILE=/run/proxy/server.pem --env TLS_KEY_FILE=/run/proxy/server-key.pem \
       "$PROXY_IMAGE"
 
+# Build a native proxy in the protected directory, outside the agent workspace.
+host-build: _check-private
+    install -d -m 700 "$PROXY_PRIVATE"
+    go build -trimpath -o "$PROXY_PRIVATE/github-agent-proxy.new" ./cmd/github-agent-proxy
+    chmod 700 "$PROXY_PRIVATE/github-agent-proxy.new"
+    mv "$PROXY_PRIVATE/github-agent-proxy.new" "$PROXY_PRIVATE/github-agent-proxy"
+
+# Start/restart on the Mac's network (VPN/private services); stop the container first.
+host-start: host-build
+    #!/usr/bin/env python3
+    import os, pathlib, plistlib, socket, subprocess
+    private = pathlib.Path(os.environ["PROXY_PRIVATE"]).resolve()
+    label = "local.github-agent-proxy"
+    domain = f"gui/{os.getuid()}"
+    service = f"{domain}/{label}"
+    if subprocess.run(["launchctl", "print", service], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+        subprocess.run(["launchctl", "bootout", service], check=True)
+    port = int(os.environ["PROXY_PORT"])
+    with socket.socket() as probe:
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            raise SystemExit(f"Port {port} is in use. Stop the container with just stop before starting the host proxy.")
+    environment = {key: os.environ[key] for key in ("ALLOWED_ORGS", "ALLOWED_USERS", "BRANCH_PREFIX")}
+    environment.update(GITHUB_TOKEN_FILE=str(private / "token"), LISTEN_ADDR=f"127.0.0.1:{port}", TLS_CERT_FILE=str(private / "server.pem"), TLS_KEY_FILE=str(private / "server-key.pem"))
+    if "MAX_PUSH_BYTES" in os.environ:
+        environment["MAX_PUSH_BYTES"] = os.environ["MAX_PUSH_BYTES"]
+    log = private / "host-proxy.log"
+    log.touch(mode=0o600, exist_ok=True)
+    log.chmod(0o600)
+    config = {"Label": label, "ProgramArguments": [str(private / "github-agent-proxy")], "WorkingDirectory": str(private), "EnvironmentVariables": environment, "StandardOutPath": str(log), "StandardErrorPath": str(log), "RunAtLoad": True, "KeepAlive": {"SuccessfulExit": False}, "ThrottleInterval": 10}
+    plist = private / "host-proxy.plist"
+    plist.write_bytes(plistlib.dumps(config))
+    plist.chmod(0o600)
+    subprocess.run(["launchctl", "bootstrap", domain, str(plist)], check=True)
+    print(f"Host proxy launched on https://127.0.0.1:{port}; check just host-logs for readiness.")
+
+# Stop the native proxy before switching back to Apple Container.
+host-stop:
+    launchctl bootout "gui/$(id -u)/local.github-agent-proxy"
+
+# Follow the native proxy's startup and runtime logs.
+host-logs:
+    tail -n 30 -f "$PROXY_PRIVATE/host-proxy.log"
+
 # Follow the running proxy's logs.
 logs:
     container logs --follow "$PROXY_NAME"
@@ -95,10 +140,13 @@ test-live: _check-private test-build
         export GH_TOKEN=proxy-placeholder GH_PROMPT_DISABLED=1
         export HTTPS_PROXY=https://127.0.0.1:8443
         export https_proxy="$HTTPS_PROXY"
-        export NO_PROXY=localhost,127.0.0.1,::1,.githubusercontent.com,codeload.github.com
-        export no_proxy="$NO_PROXY"
-        export SSL_CERT_FILE=/run/proxy/rootCA.pem
+        export HTTP_PROXY="$HTTPS_PROXY" http_proxy="$HTTPS_PROXY"
+        export ALL_PROXY="$HTTPS_PROXY" all_proxy="$HTTPS_PROXY"
+        export NO_PROXY= no_proxy=
+        cat /etc/ssl/certs/ca-certificates.crt /run/proxy/rootCA.pem > /tmp/proxy-client-ca.pem
+        export SSL_CERT_FILE=/tmp/proxy-client-ca.pem
         export GIT_SSL_CAINFO="$SSL_CERT_FILE"
+        printf "proxy-cacert = \"%s\"\n" "$SSL_CERT_FILE" > "$HOME/.curlrc"
         git config --global http.proxySSLCAInfo "$SSL_CERT_FILE"
         git config --global http."https://github.com/".proxy "$HTTPS_PROXY"
         git config --global --add url."https://github.com/".insteadOf git@github.com:
@@ -108,7 +156,7 @@ test-live: _check-private test-build
         ready=0
         for attempt in $(seq 1 40); do
           if curl --noproxy "*" --cacert "$SSL_CERT_FILE" --max-time 2 \
-              --fail --silent --output /dev/null https://127.0.0.1:8443/api/user; then
+              --fail --silent --output /dev/null https://127.0.0.1:8443/healthz; then
             ready=1
             break
           fi
