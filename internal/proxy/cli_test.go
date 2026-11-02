@@ -149,6 +149,21 @@ func testGitCLI(t *testing.T, owner, ownerType string) {
 	if got := run(clone, "rev-parse", "HEAD"); got != seed {
 		t.Fatal("clone did not fetch main")
 	}
+	// A shallow client sends boundary declarations before its ref commands.
+	shallow := filepath.Join(root, "shallow")
+	run(root, append(append([]string{}, config...), "clone", "--depth=1", remote, shallow)...)
+	if got := run(shallow, "rev-parse", "--is-shallow-repository"); got != "true" {
+		t.Fatal("expected a shallow clone")
+	}
+	shallowPush := exec.Command(git, append(append([]string{}, config...), "push", remote, "HEAD:refs/heads/agent/shallow")...)
+	shallowPush.Dir = shallow
+	shallowPush.Env = env
+	if b, err := shallowPush.CombinedOutput(); err != nil {
+		t.Fatalf("push from shallow clone: %v\n%s", err, b)
+	}
+	if got := run(root, "--git-dir="+bare, "rev-parse", "refs/heads/agent/shallow"); got != seed {
+		t.Fatal("shallow push did not create the requested ref")
+	}
 	run(work, "commit", "--allow-empty", "-m", "agent change")
 	push(true, "HEAD:refs/heads/agent/work")
 	first := run(root, "--git-dir="+bare, "rev-parse", "refs/heads/agent/work")

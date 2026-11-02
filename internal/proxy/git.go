@@ -74,6 +74,15 @@ func (p *Proxy) readCommands(r io.Reader) ([]byte, error) {
 		}
 		header.Write(b)
 		line := strings.TrimSuffix(string(b), "\n")
+		// Shallow clones declare history boundaries before sending ref updates.
+		// These packets do not update refs; preserve them for receive-pack while
+		// requiring at least one separately validated branch command below.
+		if oid, shallow := strings.CutPrefix(line, "shallow "); shallow {
+			if commands != 0 || !objectID(oid) || oid == strings.Repeat("0", 40) {
+				return nil, errDenied
+			}
+			continue
+		}
 		if command, caps, ok := strings.Cut(line, "\x00"); ok {
 			if commands != 0 {
 				return nil, errDenied
