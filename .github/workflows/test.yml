@@ -1,0 +1,24 @@
+name: Test
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Require CLI integration dependencies
+        run: |
+          git --version
+          gh --version
+      - run: test -z "$(gofmt -l cmd internal)"
+      - run: go test -race -count=1 -timeout=3m ./...
+      - run: go vet ./...
+      - uses: docker/setup-buildx-action@v4
+      - name: Build both container architectures
+        run: docker buildx build --platform linux/amd64,linux/arm64 --output type=oci,dest=/tmp/proxy-images.tar .

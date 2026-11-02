@@ -1,0 +1,5 @@
+/bin/
+/certs/
+*.env
+*.pem
+coverage.out
