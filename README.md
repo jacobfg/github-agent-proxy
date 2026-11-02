@@ -28,7 +28,7 @@ Issues have no branch, so their writes use the repository-owner and author rules
 
 Repository creation/deletion/settings, Actions dispatches, releases, tags, reviews, issue transfers, project mutations, standalone Git object creation, LFS uploads, signed pushes, and push options are not allowlisted. Unknown fields on allowed write operations are also denied. Cross-repository PR creation is supported through GraphQL with `headRepositoryId`; REST creation is limited to the same repository.
 
-The proxy resolves its identity with `/user` at startup. Each write obtains current repository/resource metadata before forwarding. Lookup failures deny the write. GraphQL aliases, fragments, variable defaults, and every field in a mutation are checked. All Git ref commands are checked before any receive-pack bytes are sent upstream; the pack itself streams after validation.
+The proxy resolves its identity with `/user` at startup. Each write obtains current repository/resource metadata before forwarding. Lookup failures deny the write. GraphQL aliases, fragments, variable defaults, and every field in a mutation are checked. All Git ref commands are checked before any receive-pack bytes are sent upstream; the pack itself streams after validation. Pushes from shallow clones are supported: leading `shallow <commit-id>` history-boundary declarations are preserved, and every ref update must still pass the branch policy.
 
 ## Start with Apple Container
 
@@ -328,8 +328,8 @@ The regular suite uses fixed fixtures; exporting your allowlists does not change
 | `TestOwnerAllowlists` | REST, GraphQL, and pushes under each owner-list combination; wrong account types; author and branch restrictions |
 | `TestRESTPolicy` | Issue/PR creation and edits, comments, refs, contents, branch rename; forbidden operations, duplicate JSON, query overrides, ambiguous paths |
 | `TestGraphQLPolicy` | Queries/mutations, authorship, PR heads, refs, aliases, defaults, fragments/cycles, mixed mutations, directives, duplicate inputs, operation selection, missing metadata |
-| `TestPushCommands` | Create/force/delete, capability whitespace, tags, mixed refs, near-prefix names, unsupported capabilities, malformed/truncated packets, duplicate refs |
-| `TestGitCLI` | Real clone/push/force/delete for both owner types, protected-ref checks, HTTPS proxy certificate trust |
+| `TestPushCommands` | Create/force/delete, shallow boundaries and protected refs, capability whitespace, tags, mixed refs, near-prefix names, unsupported capabilities, malformed/truncated packets, duplicate refs |
+| `TestGitCLI` | Real clone/push/force/delete for both owner types, shallow-clone branch creation, protected-ref checks, HTTPS proxy certificate trust |
 | `TestGHCLI` | Real implicit `gh repo view` and `gh issue create`, HTTPS/SSH remote detection, REST and GraphQL commands for both owner types, accepted and rejected writes |
 | `TestHTTPSConnect` | Verified TLS interception, API/Git hosts, requests inside CONNECT, rejection of alternate GitHub ports |
 | `TestConnect*` | End-to-end HTTPS/HTTP2 streaming and credentials, original origin certificate, no proxy-header leakage, target validation, normalized GitHub interception, dial failure, buffered tunnel bytes, shutdown |
