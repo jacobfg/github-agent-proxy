@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -31,20 +32,52 @@ type Proxy struct {
 	tunnels     map[net.Conn]bool
 	closed      bool
 	dialContext func(context.Context, string, string) (net.Conn, error)
+	lookupIP    func(context.Context, string, string) ([]netip.Addr, error)
+	localIPs    []netip.Addr
+	ca          *certificateAuthority
 }
 
 // New resolves the PAT identity before accepting traffic. Upstreams are fixed;
 // neither a client header nor an environment proxy can redirect the credential.
 func New(ctx context.Context, c Config, tlsConfig *tls.Config) (*Proxy, error) {
+	return newProxy(ctx, c, tlsConfig, nil)
+}
+
+// configureNetwork is an internal test seam; production always uses verified
+// system TLS and the checked dialer, without an upstream proxy.
+func newProxy(ctx context.Context, c Config, tlsConfig *tls.Config, configureNetwork func(*Proxy, *http.Transport)) (*Proxy, error) {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.Proxy = nil
+	t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	t.ForceAttemptHTTP2 = true
 	t.ResponseHeaderTimeout = 30 * time.Second
 	p := &Proxy{config: c, transport: t, tlsConfig: tlsConfig, tunnels: map[net.Conn]bool{}}
+	if c.interceptAll() {
+		var err error
+		p.ca, err = loadCA(c.CACertFile, c.CAKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load interception CA: %w", err)
+		}
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil, fmt.Errorf("enumerate local addresses: %w", err)
+	}
+	for _, addr := range addrs {
+		if prefix, err := netip.ParsePrefix(addr.String()); err == nil {
+			p.localIPs = append(p.localIPs, prefix.Addr().Unmap())
+		}
+	}
+	if configureNetwork != nil {
+		configureNetwork(p, t)
+	}
+	t.DialContext = p.checkedDial
 	p.client = &http.Client{Transport: t, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	var user struct {
 		Login string `json:"login"`
 	}
 	if err := p.api(ctx, "GET", "/user", nil, &user); err != nil || user.Login == "" {
+		t.CloseIdleConnections()
 		return nil, fmt.Errorf("cannot resolve PAT identity (check token and connectivity)")
 	}
 	p.login = user.Login
@@ -131,6 +164,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "host is not allowed", 403)
 		return
 	}
+	if err := p.checkHost(origin); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	// Eliminate alternate interpretations between the policy and GitHub routing.
 	if strings.ContainsAny(path, "\\%\x00\r\n") || strings.Contains(path, "//") {
 		http.Error(w, "ambiguous path", 400)
@@ -163,7 +200,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		pr.Out.URL.RawPath = ""
 		pr.Out.Host = origin
 		pr.Out.Header = make(http.Header)
-		for _, name := range []string{"Accept", "Content-Type", "Content-Encoding", "Git-Protocol", "If-Match", "If-None-Match", "If-Modified-Since", "If-Unmodified-Since", "Range", "X-Github-Api-Version"} {
+		for _, name := range []string{"Accept", "Content-Type", "Content-Encoding", "Git-Protocol", "If-Match", "If-None-Match", "If-Modified-Since", "If-Unmodified-Since", "Range", "X-Github-Api-Version", "User-Agent"} {
 			for _, v := range pr.In.Header.Values(name) {
 				pr.Out.Header.Add(name, v)
 			}
@@ -172,10 +209,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if origin == "github.com" {
 			pr.Out.SetBasicAuth("x-access-token", p.config.Token)
 		}
-		pr.Out.Header.Set("User-Agent", "github-agent-proxy")
-	}, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
-		http.Error(w, "GitHub upstream unavailable", 502)
-	}}
+		if _, present := pr.Out.Header["User-Agent"]; !present {
+			// An explicit empty value suppresses Go's default User-Agent on
+			// the wire. Absence from the client must stay absence upstream.
+			pr.Out.Header["User-Agent"] = []string{""}
+		}
+	}, ErrorHandler: upstreamError}
 	rp.ServeHTTP(w, r)
 }
 
@@ -195,13 +234,17 @@ type closingConn struct {
 func (c *closingConn) Close() error { c.once.Do(func() { close(c.done) }); return c.Conn.Close() }
 
 type oneListener struct {
-	conn     *closingConn
-	accepted bool
+	conn         *closingConn
+	accepted     bool
+	acceptedConn net.Conn
 }
 
 func (l *oneListener) Accept() (net.Conn, error) {
 	if !l.accepted {
 		l.accepted = true
+		if l.acceptedConn != nil {
+			return l.acceptedConn, nil
+		}
 		return l.conn, nil
 	}
 	<-l.conn.done

@@ -40,6 +40,7 @@ func TestLocalStatus(t *testing.T) {
 			"branch_prefix": "agent/", "token_owner": "bot", "listen_addr": "127.0.0.1:8443",
 			"max_push_bytes": float64(1 << 20), "github_reads": "unfiltered",
 			"github_writes": "default-deny", "non_github_https": "tunnel",
+			"tls_min_version": "1.2", "all_https_tls_enforced": false,
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("status = %#v; want %#v", got, want)
