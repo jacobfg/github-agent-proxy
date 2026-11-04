@@ -1,0 +1,15 @@
+{
+  "https_mode": "intercept",
+  "destinations": {
+    "deny_hosts": ["blocked.example", "*.blocked.example", "192.168.20.12", "ifconfig.co"],
+    "deny_host_regexes": ["tracking[0-9]+\\.example"],
+    "deny_ips": ["198.51.100.0/24", "2001:db8::/32"]
+  },
+  "github": {
+    "allowed_orgs": ["zendesk"],
+    "allowed_users": ["jacobfg"],
+    "branch_prefix": "agp/",
+    "write_allow_repos": ["jacobfg/permission-test"],
+    "write_deny_repos": ["zendesk/protected"]
+  }
+}

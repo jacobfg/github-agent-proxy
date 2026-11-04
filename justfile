@@ -10,7 +10,10 @@ export PROXY_NAME := env("PROXY_NAME", "github-agent-proxy")
 export PROXY_PORT := env("PROXY_PORT", "8443")
 export ALLOWED_ORGS := env("ALLOWED_ORGS", "")
 export ALLOWED_USERS := env("ALLOWED_USERS", "")
-export BRANCH_PREFIX := env("BRANCH_PREFIX", "agent/")
+export POLICY_FILE := env("POLICY_FILE", "")
+export BRANCH_PREFIX := env("BRANCH_PREFIX", if POLICY_FILE == "" { "agent/" } else { "" })
+export INTERCEPT_CA_CERT_FILE := env("INTERCEPT_CA_CERT_FILE", "")
+export INTERCEPT_CA_KEY_FILE := env("INTERCEPT_CA_KEY_FILE", "")
 
 # List local development commands.
 default:
@@ -35,15 +38,7 @@ build:
 
 # Build and start the proxy, publishing only on host loopback.
 run: _check-private build
-    container run --detach --name "$PROXY_NAME" \
-      --publish "127.0.0.1:$PROXY_PORT:8443" \
-      --user "$(id -u):$(id -g)" --read-only \
-      --mount "type=bind,source=$PROXY_PRIVATE,target=/run/proxy,readonly" \
-      --env GITHUB_TOKEN_FILE=/run/proxy/token \
-      --env ALLOWED_ORGS --env ALLOWED_USERS --env BRANCH_PREFIX \
-      --env LISTEN_ADDR=0.0.0.0:8443 --env ALLOW_CONTAINER_BIND=1 \
-      --env TLS_CERT_FILE=/run/proxy/server.pem --env TLS_KEY_FILE=/run/proxy/server-key.pem \
-      "$PROXY_IMAGE"
+    python3 scripts/container-run.py run
 
 # Build a native proxy in the protected directory, outside the agent workspace.
 host-build: _check-private
@@ -68,7 +63,7 @@ host-start: host-build
             probe.bind(("127.0.0.1", port))
         except OSError:
             raise SystemExit(f"Port {port} is in use. Stop the container with just stop before starting the host proxy.")
-    environment = {key: os.environ[key] for key in ("ALLOWED_ORGS", "ALLOWED_USERS", "BRANCH_PREFIX")}
+    environment = {key: os.environ[key] for key in ("ALLOWED_ORGS", "ALLOWED_USERS", "BRANCH_PREFIX", "POLICY_FILE", "INTERCEPT_CA_CERT_FILE", "INTERCEPT_CA_KEY_FILE", "SSL_CERT_FILE", "SSL_CERT_DIR") if os.environ.get(key)}
     environment.update(GITHUB_TOKEN_FILE=str(private / "token"), LISTEN_ADDR=f"127.0.0.1:{port}", TLS_CERT_FILE=str(private / "server.pem"), TLS_KEY_FILE=str(private / "server-key.pem"))
     if "MAX_PUSH_BYTES" in os.environ:
         environment["MAX_PUSH_BYTES"] = os.environ["MAX_PUSH_BYTES"]
@@ -116,61 +111,37 @@ test-shell: test-build
 
 # Report ALLOW/BLOCK for the configured policy and simulated OWNER/REPO (User or Organization).
 policy repo owner_type="User": _check-policy test-build
-    container run --rm \
-      --env POLICY_CHECK=1 --env "POLICY_CHECK_REPO=$1" --env "POLICY_CHECK_OWNER_TYPE=$2" \
-      --env ALLOWED_ORGS --env ALLOWED_USERS --env BRANCH_PREFIX \
-      "$TEST_IMAGE" go test -v -count=1 ./internal/proxy -run '^TestConfiguredPolicy$'
+    python3 scripts/container-run.py policy "$1" "$2"
 
-# Start the proxy and an interactive gh/git shell together, using the mounted test PAT.
+# Start the proxy and interactive gh/git shell with the mounted test PAT.
 test-live: _check-private test-build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    test -s "$PROXY_PRIVATE/rootCA.pem" || { printf 'Missing public root CA; run just certs.\n' >&2; exit 1; }
-    container run --rm -it \
-      --mount "type=bind,source=$PROXY_PRIVATE,target=/run/proxy,readonly" \
-      --env GITHUB_TOKEN_FILE=/run/proxy/token \
-      --env TLS_CERT_FILE=/run/proxy/server.pem --env TLS_KEY_FILE=/run/proxy/server-key.pem \
-      --env ALLOWED_ORGS --env ALLOWED_USERS --env BRANCH_PREFIX \
-      "$TEST_IMAGE" bash -euc '
-        openssl verify -CAfile /run/proxy/rootCA.pem /run/proxy/server.pem
-        github-agent-proxy >/tmp/github-agent-proxy.log 2>&1 &
-        proxy_pid=$!
-        trap "kill $proxy_pid 2>/dev/null || true" EXIT
+    python3 scripts/container-run.py live
 
-        export GH_TOKEN=proxy-placeholder GH_PROMPT_DISABLED=1
-        export HTTPS_PROXY=https://127.0.0.1:8443
-        export https_proxy="$HTTPS_PROXY"
-        export HTTP_PROXY="$HTTPS_PROXY" http_proxy="$HTTPS_PROXY"
-        export ALL_PROXY="$HTTPS_PROXY" all_proxy="$HTTPS_PROXY"
-        export NO_PROXY= no_proxy=
-        cat /etc/ssl/certs/ca-certificates.crt /run/proxy/rootCA.pem > /tmp/proxy-client-ca.pem
-        export SSL_CERT_FILE=/tmp/proxy-client-ca.pem
-        export GIT_SSL_CAINFO="$SSL_CERT_FILE"
-        printf "proxy-cacert = \"%s\"\n" "$SSL_CERT_FILE" > "$HOME/.curlrc"
-        git config --global http.proxySSLCAInfo "$SSL_CERT_FILE"
-        git config --global http."https://github.com/".proxy "$HTTPS_PROXY"
-        git config --global --add url."https://github.com/".insteadOf git@github.com:
-        git config --global --add url."https://github.com/".insteadOf ssh://git@github.com/
-        git config --global credential."https://github.com".helper ""
+# Generate a dedicated interception CA; existing files are never overwritten.
+intercept-ca:
+    install -d -m 700 "$PROXY_PRIVATE"
+    go run ./cmd/github-agent-proxy init-ca --cert "$PROXY_PRIVATE/intercept-ca.pem" --key "$PROXY_PRIVATE/intercept-ca-key.pem"
 
-        ready=0
-        for attempt in $(seq 1 40); do
-          if curl --noproxy "*" --cacert "$SSL_CERT_FILE" --max-time 2 \
-              --fail --silent --output /dev/null https://127.0.0.1:8443/healthz; then
-            ready=1
-            break
-          fi
-          if ! kill -0 "$proxy_pid" 2>/dev/null; then break; fi
-          sleep 1
-        done
-        if [ "$ready" != 1 ]; then cat /tmp/github-agent-proxy.log; exit 1; fi
-        printf "Proxy ready. Use normal gh/git commands. Logs: /tmp/github-agent-proxy.log\n"
-        bash --noprofile --norc -i
-      '
+# Prepare/start an isolated native trial on 8444, preserving the current service.
+trial-start:
+    python3 scripts/trial.py start
+
+trial-prepare:
+    python3 scripts/trial.py prepare
+
+trial-stop:
+    python3 scripts/trial.py stop
+
+trial-status:
+    python3 scripts/trial.py status
+
+# Add an opt-in launcher and profile to the companion Safehouse checkout.
+trial-sandbox safehouse_repo:
+    python3 scripts/install-safehouse-trial.py "$1"
 
 [private]
 _check-policy:
-    @test -n "$ALLOWED_ORGS$ALLOWED_USERS" || { printf 'Set ALLOWED_ORGS and/or ALLOWED_USERS in .env or your environment.\n' >&2; exit 1; }
+    @test -n "$POLICY_FILE$ALLOWED_ORGS$ALLOWED_USERS" || { printf 'Set ALLOWED_ORGS and/or ALLOWED_USERS in .env or your environment.\n' >&2; exit 1; }
 
 [private]
 _check-private: _check-policy

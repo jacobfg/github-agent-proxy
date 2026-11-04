@@ -13,10 +13,31 @@ type Config struct {
 	Organizations                                  map[string]bool
 	Users                                          map[string]bool
 	MaxPushBytes                                   int64
+	Policy                                         *Policy
+	CACertFile, CAKeyFile                          string
 }
 
 func FromEnv() (Config, error) {
 	c := Config{Listen: os.Getenv("LISTEN_ADDR"), Token: os.Getenv("GITHUB_TOKEN"), BranchPrefix: os.Getenv("BRANCH_PREFIX"), CertFile: os.Getenv("TLS_CERT_FILE"), KeyFile: os.Getenv("TLS_KEY_FILE"), Organizations: parseLogins(os.Getenv("ALLOWED_ORGS")), Users: parseLogins(os.Getenv("ALLOWED_USERS")), MaxPushBytes: 1 << 30}
+	c.CACertFile, c.CAKeyFile = os.Getenv("INTERCEPT_CA_CERT_FILE"), os.Getenv("INTERCEPT_CA_KEY_FILE")
+	if file := os.Getenv("POLICY_FILE"); file != "" {
+		for _, key := range []string{"ALLOWED_ORGS", "ALLOWED_USERS", "BRANCH_PREFIX"} {
+			if os.Getenv(key) != "" {
+				return c, fmt.Errorf("%s conflicts with POLICY_FILE; put authorization settings in JSON", key)
+			}
+		}
+		var err error
+		c.Policy, err = loadPolicy(file)
+		if err != nil {
+			return c, err
+		}
+		c.Organizations = parseLogins(strings.Join(c.Policy.GitHub.AllowedOrgs, ","))
+		c.Users = parseLogins(strings.Join(c.Policy.GitHub.AllowedUsers, ","))
+		c.BranchPrefix = c.Policy.GitHub.BranchPrefix
+	}
+	if c.interceptAll() && (c.CACertFile == "" || c.CAKeyFile == "") {
+		return c, fmt.Errorf("interception requires INTERCEPT_CA_CERT_FILE and INTERCEPT_CA_KEY_FILE")
+	}
 	if c.Listen == "" {
 		c.Listen = "127.0.0.1:8443"
 	}
