@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"strings"
 	"testing"
@@ -106,6 +107,7 @@ func TestConnectNormalizesGitHub(t *testing.T) {
 
 func TestConnectDialFailure(t *testing.T) {
 	p, _ := fixture(t)
+	p.lookupIP = testLookup
 	endpoint, _ := cliServer(t, p)
 	p.dialContext = func(context.Context, string, string) (net.Conn, error) {
 		return nil, errors.New("private dial error")
@@ -130,11 +132,12 @@ func TestConnectDialFailure(t *testing.T) {
 
 func TestConnectBufferedBytesAndShutdown(t *testing.T) {
 	p, _ := fixture(t)
+	p.lookupIP = testLookup
 	endpoint, _ := cliServer(t, p)
 	server, relay := net.Pipe()
 	defer server.Close()
 	p.dialContext = func(_ context.Context, network, addr string) (net.Conn, error) {
-		if network != "tcp" || addr != "example.com:9443" {
+		if network != "tcp" || addr != "192.0.2.1:9443" {
 			t.Errorf("dial %s %s", network, addr)
 		}
 		return relay, nil
@@ -222,4 +225,8 @@ func connectRaw(t *testing.T, endpoint, target string) net.Conn {
 		t.Fatalf("CONNECT: %v %v", res, err)
 	}
 	return &bufferedConn{Conn: c, reader: r}
+}
+
+func testLookup(context.Context, string, string) ([]netip.Addr, error) {
+	return []netip.Addr{netip.MustParseAddr("192.0.2.1")}, nil
 }

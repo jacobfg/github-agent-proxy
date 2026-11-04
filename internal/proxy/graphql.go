@@ -228,7 +228,7 @@ func (p *Proxy) node(r *http.Request, id string) (*gqlNode, error) {
 }
 
 func (p *Proxy) gqlRepoAllowed(repo gqlRepo) bool {
-	return p.ownerAllowed(repo.Owner.Type, repo.Owner.Login)
+	return p.repositoryAllowed(repo.Owner.Type, repo.Owner.Login, repo.Name)
 }
 func (p *Proxy) ownNode(n *gqlNode) bool {
 	if (n.Type != "Issue" && n.Type != "PullRequest") || !p.gqlRepoAllowed(n.Repository) || !strings.EqualFold(n.Author.Login, p.login) {

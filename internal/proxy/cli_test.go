@@ -63,7 +63,7 @@ func TestGitCLI(t *testing.T) {
 	}
 }
 
-func testGitCLI(t *testing.T, owner, ownerType string) {
+func testGitCLI(t *testing.T, owner, ownerType string, intercept ...bool) {
 	git, err := exec.LookPath("git")
 	if err != nil {
 		t.Skip("git is not installed")
@@ -101,6 +101,11 @@ func testGitCLI(t *testing.T, owner, ownerType string) {
 	defer backend.Close()
 	backendURL, _ := url.Parse(backend.URL)
 	p, _ := fixtureForOwner(t, owner, ownerType)
+	var interceptCA []byte
+	if len(intercept) > 0 && intercept[0] {
+		interceptCA = enableInterception(t, p)
+		p.config.Policy.GitHub.WriteAllowRepos = []string{owner + "/repo"}
+	}
 	metadata := p.transport
 	direct := http.DefaultTransport.(*http.Transport).Clone()
 	direct.Proxy = nil
@@ -120,6 +125,17 @@ func testGitCLI(t *testing.T, owner, ownerType string) {
 		return direct.RoundTrip(out)
 	})
 	endpoint, ca := cliServer(t, p)
+	if len(interceptCA) > 0 {
+		f, err := os.OpenFile(ca, os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = f.Write(interceptCA)
+		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	env = append(env, "GIT_SSL_CAINFO="+ca)
 	remote := "https://github.com/" + owner + "/repo.git"
 	t.Run("HTTPSProxyCA", func(t *testing.T) {
@@ -189,6 +205,19 @@ func testGitCLI(t *testing.T, owner, ownerType string) {
 	if got := run(root, "--git-dir="+bare, "rev-parse", "refs/heads/main"); got != seed {
 		t.Fatal("protected main changed")
 	}
+	blocked, _ := fixtureForOwner(t, owner, ownerType)
+	blocked.config.Policy = &Policy{HTTPSMode: "tunnel", GitHub: GitHubPolicy{WriteDenyRepos: []string{owner + "/repo"}}}
+	blocked.transport = p.transport
+	blockedEndpoint, blockedCA := cliServer(t, blocked)
+	env = append(env, "GIT_SSL_CAINFO="+blockedCA)
+	blockedArgs := []string{"-c", "http.https://github.com/.proxy=" + blockedEndpoint, "-c", "http.proxySSLCAInfo=" + blockedCA, "-c", "http.sslCAInfo=" + blockedCA}
+	run(root, append(append([]string{}, blockedArgs...), "ls-remote", remote)...)
+	denyPush := exec.Command(git, append(blockedArgs, "push", remote, "HEAD:refs/heads/agent/blocked")...)
+	denyPush.Dir = work
+	denyPush.Env = env
+	if b, err := denyPush.CombinedOutput(); err == nil || !strings.Contains(string(b), "403") {
+		t.Fatalf("repo-denied push: %v %s", err, b)
+	}
 }
 
 func TestGHCLI(t *testing.T) {
@@ -197,13 +226,29 @@ func TestGHCLI(t *testing.T) {
 	}
 }
 
-func testGHCLI(t *testing.T, owner, ownerType string) {
+func testGHCLI(t *testing.T, owner, ownerType string, intercept ...bool) {
 	gh, err := exec.LookPath("gh")
 	if err != nil {
 		t.Skip("gh is not installed")
 	}
 	p, _ := fixtureForOwner(t, owner, ownerType)
+	var interceptCA []byte
+	if len(intercept) > 0 && intercept[0] {
+		interceptCA = enableInterception(t, p)
+		p.config.Policy.GitHub.WriteAllowRepos = []string{owner + "/repo"}
+	}
 	endpoint, ca := cliServer(t, p)
+	if len(interceptCA) > 0 {
+		f, err := os.OpenFile(ca, os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = f.Write(interceptCA)
+		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	env := append(cleanCLIEnv(t.TempDir()), "GH_TOKEN=placeholder-not-a-real-token", "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "GH_NO_EXTENSION_UPDATE_NOTIFIER=1", "GH_TELEMETRY=0", "HTTPS_PROXY="+endpoint, "SSL_CERT_FILE="+ca)
 	git, err := exec.LookPath("git")
 	if err != nil {
@@ -261,4 +306,9 @@ func testGHCLI(t *testing.T, owner, ownerType string) {
 			t.Fatalf("gh repo detection for %s: %v\n%s", remote, e, b)
 		}
 	}
+}
+
+func TestInterceptedCLIs(t *testing.T) {
+	t.Run("git", func(t *testing.T) { testGitCLI(t, "acme", "Organization", true) })
+	t.Run("gh", func(t *testing.T) { testGHCLI(t, "acme", "Organization", true) })
 }

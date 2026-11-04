@@ -39,12 +39,12 @@ func (p *Proxy) repoAllowed(r *http.Request, owner, name string) bool {
 		return false
 	}
 	var repo repository
-	return p.api(r.Context(), "GET", "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name), nil, &repo) == nil && p.ownerAllowed(repo.Owner.Type, repo.Owner.Login) && strings.EqualFold(repo.Owner.Login, owner) && strings.EqualFold(repo.Name, name)
+	return p.api(r.Context(), "GET", "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name), nil, &repo) == nil && p.repositoryAllowed(repo.Owner.Type, repo.Owner.Login, repo.Name) && strings.EqualFold(repo.Owner.Login, owner) && strings.EqualFold(repo.Name, name)
 }
 
 func (p *Proxy) ownPull(r *http.Request, base, id string) bool {
 	var pr pull
-	return p.api(r.Context(), "GET", base+"/pulls/"+id, nil, &pr) == nil && strings.EqualFold(pr.User.Login, p.login) && p.branch(pr.Head.Ref) && pr.Head.Repo != nil && p.ownerAllowed(pr.Head.Repo.Owner.Type, pr.Head.Repo.Owner.Login)
+	return p.api(r.Context(), "GET", base+"/pulls/"+id, nil, &pr) == nil && strings.EqualFold(pr.User.Login, p.login) && p.branch(pr.Head.Ref) && pr.Head.Repo != nil && p.repositoryAllowed(pr.Head.Repo.Owner.Type, pr.Head.Repo.Owner.Login, pr.Head.Repo.Name)
 }
 
 func (p *Proxy) ownIssue(r *http.Request, base, id string) bool {

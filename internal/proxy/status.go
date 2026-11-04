@@ -34,26 +34,41 @@ func (p *Proxy) serveLocal(w http.ResponseWriter, r *http.Request) bool {
 			Status string `json:"status"`
 		}{status}
 	} else {
+		mode, fingerprint := "tunnel", ""
+		if p.config.interceptAll() {
+			mode = "intercept"
+		}
+		if p.ca != nil {
+			fingerprint = p.ca.fingerprint
+		}
 		body = struct {
-			AllowedOrgs    []string `json:"allowed_orgs"`
-			AllowedUsers   []string `json:"allowed_users"`
-			BranchPrefix   string   `json:"branch_prefix"`
-			TokenOwner     string   `json:"token_owner"`
-			ListenAddr     string   `json:"listen_addr"`
-			MaxPushBytes   int64    `json:"max_push_bytes"`
-			GitHubReads    string   `json:"github_reads"`
-			GitHubWrites   string   `json:"github_writes"`
-			NonGitHubHTTPS string   `json:"non_github_https"`
+			AllowedOrgs         []string `json:"allowed_orgs"`
+			AllowedUsers        []string `json:"allowed_users"`
+			BranchPrefix        string   `json:"branch_prefix"`
+			TokenOwner          string   `json:"token_owner"`
+			ListenAddr          string   `json:"listen_addr"`
+			MaxPushBytes        int64    `json:"max_push_bytes"`
+			GitHubReads         string   `json:"github_reads"`
+			GitHubWrites        string   `json:"github_writes"`
+			NonGitHubHTTPS      string   `json:"non_github_https"`
+			Policy              *Policy  `json:"policy,omitempty"`
+			TLSMinVersion       string   `json:"tls_min_version"`
+			AllHTTPSTLSEnforced bool     `json:"all_https_tls_enforced"`
+			CAFingerprint       string   `json:"interception_ca_sha256,omitempty"`
 		}{
-			AllowedOrgs:    enabledLogins(p.config.Organizations),
-			AllowedUsers:   enabledLogins(p.config.Users),
-			BranchPrefix:   p.config.BranchPrefix,
-			TokenOwner:     p.login,
-			ListenAddr:     p.config.Listen,
-			MaxPushBytes:   p.config.MaxPushBytes,
-			GitHubReads:    "unfiltered",
-			GitHubWrites:   "default-deny",
-			NonGitHubHTTPS: "tunnel",
+			AllowedOrgs:         enabledLogins(p.config.Organizations),
+			AllowedUsers:        enabledLogins(p.config.Users),
+			BranchPrefix:        p.config.BranchPrefix,
+			TokenOwner:          p.login,
+			ListenAddr:          p.config.Listen,
+			MaxPushBytes:        p.config.MaxPushBytes,
+			GitHubReads:         "unfiltered",
+			GitHubWrites:        "default-deny",
+			NonGitHubHTTPS:      mode,
+			Policy:              p.config.Policy,
+			TLSMinVersion:       "1.2",
+			AllHTTPSTLSEnforced: p.config.interceptAll(),
+			CAFingerprint:       fingerprint,
 		}
 	}
 	w.WriteHeader(code)

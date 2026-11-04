@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -22,6 +24,18 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "init-ca" {
+		flags := flag.NewFlagSet("init-ca", flag.ContinueOnError)
+		cert := flags.String("cert", "", "public CA certificate path")
+		key := flags.String("key", "", "private signing key path")
+		if err := flags.Parse(os.Args[2:]); err != nil {
+			return err
+		}
+		if *cert == "" || *key == "" || flags.NArg() != 0 {
+			return fmt.Errorf("usage: github-agent-proxy init-ca --cert PATH --key PATH")
+		}
+		return proxy.GenerateCA(*cert, *key)
+	}
 	c, err := proxy.FromEnv()
 	if err != nil {
 		return err

@@ -1,6 +1,6 @@
 # GitHub agent proxy
 
-A Go proxy that keeps a fine-grained GitHub PAT outside a coding agent's environment and applies a narrower write policy. Normal `gh` and `git` commands use a local TLS endpoint. For GitHub, client credentials are discarded and the proxy injects its own token only into requests to fixed GitHub upstreams. Other HTTPS destinations use opaque CONNECT tunnels: their TLS, credentials, streaming, and HTTP/2 remain end-to-end.
+A Go proxy that keeps a fine-grained GitHub PAT outside a coding agent's environment and applies a narrower write policy. Normal `gh` and `git` commands use a local TLS endpoint. For GitHub, client credentials are discarded and the proxy injects its own token only into requests to fixed GitHub upstreams. With a JSON policy, the proxy can intercept all HTTPS, enforce TLS 1.2+, block destinations by hostname/IP/CIDR, and narrow GitHub writes by repository. Legacy configuration keeps opaque non-GitHub CONNECT tunnels. See the [policy examples and isolated trial guide](docs/policy.md).
 
 GitHub reads have no repository-owner, author, or branch restrictions. GitHub still applies the PAT's own permissions. GitHub writes are denied unless explicitly supported below.
 
@@ -436,3 +436,7 @@ Automation
 - Scheduled/manual Renovate maintains Go modules, the build image, and GitHub Actions. Set the repository secret `RENOVATE_TOKEN` with repository contents, pull requests, issues, and workflow permissions appropriate to dependency PRs. Updates require review; automerge is off.
 
 No live GitHub writes are part of the test suite. Test any newly allowed mutation against a disposable repository before broadening a production policy.
+
+### JSON policy and HTTPS interception trial
+
+See [the policy guide](docs/policy.md) for hostname/IP examples, repository allow/deny precedence, JSON migration, CA trust, `just trial-start`, the separate Safehouse launcher, and rollback. The trial uses port 8444 and leaves the existing service on 8443 running.

@@ -37,8 +37,12 @@ func fixture(t *testing.T) (*Proxy, *atomic.Int32) {
 	return fixtureForOwner(t, "acme", "Organization")
 }
 
-func fixtureForOwner(t *testing.T, owner, ownerType string) (*Proxy, *atomic.Int32) {
+func fixtureForOwner(t *testing.T, owner, ownerType string, names ...string) (*Proxy, *atomic.Int32) {
 	t.Helper()
+	repoName := "repo"
+	if len(names) > 0 {
+		repoName = names[0]
+	}
 	writes := &atomic.Int32{}
 	p := &Proxy{config: Config{Token: "real-secret", Organizations: map[string]bool{}, Users: map[string]bool{}, BranchPrefix: "agent/", MaxPushBytes: 1 << 20}, login: "bot", tunnels: map[net.Conn]bool{}}
 	if ownerType == "Organization" {
@@ -69,14 +73,14 @@ func fixtureForOwner(t *testing.T, owner, ownerType string) (*Proxy, *atomic.Int
 			_ = json.Unmarshal(b, &q)
 			if q.Query == nodeQuery {
 				id, _ := q.Variables["id"].(string)
-				return response(map[string]any{"data": map[string]any{"node": testNode(id, owner, ownerType, p.config.BranchPrefix)}}), nil
+				return response(map[string]any{"data": map[string]any{"node": testNode(id, owner, ownerType, p.config.BranchPrefix, repoName)}}), nil
 			}
 			if strings.Contains(q.Query, "repository(") {
-				return response(map[string]any{"data": map[string]any{"repository": map[string]any{"id": "repo", "name": "repo", "nameWithOwner": owner + "/repo", "owner": map[string]any{"login": owner}, "hasIssuesEnabled": true, "isBlankIssuesEnabled": true, "issueTemplates": []any{}, "viewerPermission": "ADMIN"}}}), nil
+				return response(map[string]any{"data": map[string]any{"repository": map[string]any{"id": "repo", "name": repoName, "nameWithOwner": owner + "/" + repoName, "owner": map[string]any{"login": owner}, "hasIssuesEnabled": true, "isBlankIssuesEnabled": true, "issueTemplates": []any{}, "viewerPermission": "ADMIN"}}}), nil
 			}
 			if strings.Contains(q.Query, "createIssue") {
 				writes.Add(1)
-				return response(map[string]any{"data": map[string]any{"createIssue": map[string]any{"issue": map[string]any{"url": "https://github.com/" + owner + "/repo/issues/1", "number": 1}}}}), nil
+				return response(map[string]any{"data": map[string]any{"createIssue": map[string]any{"issue": map[string]any{"url": "https://github.com/" + owner + "/" + repoName + "/issues/1", "number": 1}}}}), nil
 			}
 		}
 		if r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/") {
@@ -101,7 +105,7 @@ func fixtureForOwner(t *testing.T, owner, ownerType string) (*Proxy, *atomic.Int
 				if strings.HasSuffix(path, "/3") {
 					branch = "main"
 				}
-				return response(map[string]any{"user": map[string]any{"login": author}, "head": map[string]any{"ref": branch, "repo": map[string]any{"name": "repo", "owner": map[string]any{"login": owner, "type": ownerType}}}}), nil
+				return response(map[string]any{"user": map[string]any{"login": author}, "head": map[string]any{"ref": branch, "repo": map[string]any{"name": repoName, "owner": map[string]any{"login": owner, "type": ownerType}}}}), nil
 			}
 			typeName := ownerType
 			parts := strings.Split(path, "/")
@@ -121,14 +125,18 @@ func fixtureForOwner(t *testing.T, owner, ownerType string) (*Proxy, *atomic.Int
 	return p, writes
 }
 
-func testNode(id, login, ownerType, branchPrefix string) any {
+func testNode(id, login, ownerType, branchPrefix string, names ...string) any {
+	repoName := "repo"
+	if len(names) > 0 {
+		repoName = names[0]
+	}
 	owner := map[string]any{"__typename": ownerType, "login": login}
-	repo := map[string]any{"name": "repo", "owner": owner}
+	repo := map[string]any{"name": repoName, "owner": owner}
 	if id == "repo" {
-		return map[string]any{"__typename": "Repository", "name": "repo", "owner": owner}
+		return map[string]any{"__typename": "Repository", "name": repoName, "owner": owner}
 	}
 	if id == "foreign-repo" {
-		return map[string]any{"__typename": "Repository", "name": "repo", "owner": map[string]any{"__typename": "Organization", "login": "other"}}
+		return map[string]any{"__typename": "Repository", "name": repoName, "owner": map[string]any{"__typename": "Organization", "login": "other"}}
 	}
 	if id == "ref" || id == "main-ref" || id == "tag" {
 		name := branchPrefix + "work"
@@ -486,16 +494,14 @@ func TestStartupIdentityAndRedirectSafety(t *testing.T) {
 	defer s.Close()
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM(certPEM)
-	original := http.DefaultTransport
-	transport := original.(*http.Transport).Clone()
-	transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
-	transport.Proxy = func(*http.Request) (*url.URL, error) { return url.Parse("http://127.0.0.1:1") }
-	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, network, s.Listener.Addr().String())
-	}
-	http.DefaultTransport = transport
-	defer func() { http.DefaultTransport = original; transport.CloseIdleConnections() }()
-	p, err := New(context.Background(), Config{Token: "startup-secret"}, nil)
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+	p, err := newProxy(context.Background(), Config{Token: "startup-secret"}, nil, func(p *Proxy, transport *http.Transport) {
+		transport.TLSClientConfig.RootCAs = roots
+		p.lookupIP = testLookup
+		p.dialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, s.Listener.Addr().String())
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

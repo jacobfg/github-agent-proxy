@@ -33,6 +33,7 @@ func TestConfiguredPolicy(t *testing.T) {
 	for key, value := range map[string]string{
 		"GITHUB_TOKEN": "real-secret", "GITHUB_TOKEN_FILE": "",
 		"TLS_CERT_FILE": "unused-test-cert", "TLS_KEY_FILE": "unused-test-key",
+		"INTERCEPT_CA_CERT_FILE": "unused-test-ca", "INTERCEPT_CA_KEY_FILE": "unused-test-ca-key",
 		"LISTEN_ADDR": "127.0.0.1:8443", "ALLOW_CONTAINER_BIND": "", "MAX_PUSH_BYTES": "",
 	} {
 		t.Setenv(key, value)
@@ -41,7 +42,7 @@ func TestConfiguredPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	listed := kind == "Organization" && c.Organizations[strings.ToLower(owner)] || kind == "User" && c.Users[strings.ToLower(owner)]
+	listed := (&Proxy{config: c}).repositoryAllowed(kind, owner, name)
 	branch := c.BranchPrefix + "work"
 	t.Logf("OFFLINE: repository=%s owner_type=%s branch=%s; GitHub metadata is mocked, resource authors are bot or other, PAT identity is bot", repo, kind, branch)
 	if !listed {
@@ -119,7 +120,7 @@ func TestConfiguredPolicy(t *testing.T) {
 	}
 	for _, s := range scenarios {
 		t.Run(s.name, func(t *testing.T) {
-			p, writes := fixtureForOwner(t, owner, kind)
+			p, writes := fixtureForOwner(t, owner, kind, name)
 			p.config = c
 			path := "/api" + s.path
 			if s.git {

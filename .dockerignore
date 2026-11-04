@@ -6,3 +6,8 @@
 !internal/
 !internal/**
 !THIRD_PARTY_NOTICES.md
+
+!scripts/
+!scripts/test-live.sh
+!examples/
+!examples/**
