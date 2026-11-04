@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,9 @@ import (
 	"github.com/jacobfg/github-agent-proxy2/internal/proxy"
 )
 
+// Set by release builds; local development builds deliberately identify as dev.
+var version = "dev"
+
 func main() {
 	if err := run(); err != nil {
 		log.Print(err)
@@ -24,17 +28,28 @@ func main() {
 }
 
 func run() error {
-	if len(os.Args) > 1 && os.Args[1] == "init-ca" {
+	return runArgs(os.Args[1:], os.Stdout)
+}
+
+func runArgs(args []string, out io.Writer) error {
+	if len(args) == 1 && (args[0] == "--version" || args[0] == "version") {
+		_, err := fmt.Fprintf(out, "github-agent-proxy %s\n", version)
+		return err
+	}
+	if len(args) > 0 && args[0] == "init-ca" {
 		flags := flag.NewFlagSet("init-ca", flag.ContinueOnError)
 		cert := flags.String("cert", "", "public CA certificate path")
 		key := flags.String("key", "", "private signing key path")
-		if err := flags.Parse(os.Args[2:]); err != nil {
+		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
 		if *cert == "" || *key == "" || flags.NArg() != 0 {
 			return fmt.Errorf("usage: github-agent-proxy init-ca --cert PATH --key PATH")
 		}
 		return proxy.GenerateCA(*cert, *key)
+	}
+	if len(args) != 0 {
+		return fmt.Errorf("usage: github-agent-proxy [--version | init-ca --cert PATH --key PATH]")
 	}
 	c, err := proxy.FromEnv()
 	if err != nil {
