@@ -13,6 +13,11 @@ if brew list --versions github-agent-proxy >/dev/null 2>&1; then
 fi
 brew tap jacobfg/github-agent-proxy "$repo_dir"
 tap_dir="$(brew --repository jacobfg/github-agent-proxy)"
+# Keep the public tap identity in bottle receipts, not the CI checkout path.
+git -C "$tap_dir" remote set-url origin https://github.com/jacobfg/github-agent-proxy
+if brew help trust >/dev/null 2>&1; then
+  brew trust --formula "$formula"
+fi
 mkdir -p "$tap_dir/Formula" "$bottle_dir"
 cp "$source_dir/github-agent-proxy.rb" "$tap_dir/Formula/github-agent-proxy.rb"
 # Seed the cache with the exact archive destined for the release. This allows

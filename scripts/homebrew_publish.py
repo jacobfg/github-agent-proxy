@@ -45,6 +45,9 @@ def main():
 
     run("brew", "tap", "jacobfg/github-agent-proxy", str(ROOT))
     tap = Path(output("brew", "--repository", "jacobfg/github-agent-proxy"))
+    run("git", "-C", str(tap), "remote", "set-url", "origin", f"https://github.com/{REPO}")
+    if subprocess.run(["brew", "help", "trust"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+        run("brew", "trust", "--formula", "jacobfg/github-agent-proxy/github-agent-proxy")
     formula = tap / "Formula/github-agent-proxy.rb"
     shutil.copyfile(source / "github-agent-proxy.rb", formula)
     run("brew", "bottle", "--merge", "--write", "--no-commit", *map(str, sorted(bottles.glob("*.bottle.json"))), cwd=bottles)
