@@ -12,112 +12,119 @@ concurrency:
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 env:
+  # renovate: datasource=github-releases depName=isometry/gobottle
+  GOBOTTLE_VERSION_PIN: v0.9.0
   HOMEBREW_NO_AUTO_UPDATE: '1'
   HOMEBREW_NO_INSTALL_CLEANUP: '1'
   HOMEBREW_NO_ENV_HINTS: '1'
 
 jobs:
-  source:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Prepare checked source archive and formula
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: isometry/gobottle-setup@84e89fbdda871c4a0e31c81afeef9371e8089436
+        with:
+          version: ${{ env.GOBOTTLE_VERSION_PIN }}
+      - name: Test before packaging
+        run: |
+          git --version
+          gh --version
+          test -z "$(gofmt -l notices.go cmd internal)"
+          go test -race -count=1 -timeout=3m ./...
+          go vet ./...
+      - name: Select version and source
         env:
           RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
-          args=(--output "$RUNNER_TEMP/source")
-          if [[ -n "$RELEASE_TAG" ]]; then args+=(--release "$RELEASE_TAG"); fi
-          python3 scripts/homebrew_release.py prepare "${args[@]}"
+          version=0.0.0
+          if [[ -n "$RELEASE_TAG" ]]; then
+            [[ "$RELEASE_TAG" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+            git merge-base --is-ancestor HEAD origin/main
+            version="$RELEASE_TAG"
+          fi
+          # Pin source to the built commit; the query supplies Homebrew's version hint.
+          source_url="https://github.com/$GITHUB_REPOSITORY/archive/$GITHUB_SHA.tar.gz?version=$version"
+          curl --fail --location --retry 3 "$source_url" -o "$RUNNER_TEMP/source.tar.gz"
+          source_sha="$(sha256sum "$RUNNER_TEMP/source.tar.gz" | cut -d ' ' -f 1)"
+          {
+            echo "GOBOTTLE_VERSION=$version"
+            echo "GOBOTTLE_SOURCE_URL=$source_url"
+            echo "GOBOTTLE_SOURCE_SHA256=$source_sha"
+          } >> "$GITHUB_ENV"
+      - name: Build Apple Silicon bottle and preview formula
+        run: |
+          gobottle build --output-dir bottles
+          gobottle release --dry-run --input bottles/bottles.json > bottles/github-agent-proxy.rb
+          gobottle push --dry-run --input bottles/bottles.json
       - uses: actions/upload-artifact@v7
         with:
-          name: homebrew-source
-          path: ${{ runner.temp }}/source/
+          name: homebrew-bottles
+          path: bottles/
           if-no-files-found: error
           retention-days: 14
 
-  bottle:
-    needs: source
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            arch: arm64
-          - runner: macos-15-intel
-            arch: x86_64
-    runs-on: ${{ matrix.runner }}
+  install:
+    needs: build
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: Homebrew/actions/setup-homebrew@c262868c096d909fc278daa87ed9772967331ea3
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
       - uses: actions/download-artifact@v8
         with:
-          name: homebrew-source
-          path: ${{ runner.temp }}/source/
-      - name: Install build and test tools
-        env:
-          EXPECTED_ARCH: ${{ matrix.arch }}
+          name: homebrew-bottles
+          path: bottles/
+      - name: Install and test the built bottle
         run: |
-          test "$(uname -m)" = "$EXPECTED_ARCH"
-          brew install go gh
-          go version
-          git --version
-          gh --version
-      - name: Test before bottling
-        run: |
-          test -z "$(gofmt -l cmd internal)"
-          go test -race -count=1 -timeout=3m ./...
-          go vet ./...
-          python3 -m unittest discover -s scripts -p 'test_*.py'
-      - name: Build formula, bottle, and verify bottle reinstall
-        run: bash scripts/homebrew-build.sh "$RUNNER_TEMP/source" "$RUNNER_TEMP/bottles"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: homebrew-bottle-${{ matrix.arch }}
-          path: ${{ runner.temp }}/bottles/*.bottle.*
-          if-no-files-found: error
-          retention-days: 14
+          test "$(uname -m)" = arm64
+          formula=jacobfg/github-agent-proxy/github-agent-proxy
+          brew tap jacobfg/github-agent-proxy "$PWD"
+          tap_dir="$(brew --repository jacobfg/github-agent-proxy)"
+          git -C "$tap_dir" remote set-url origin https://github.com/jacobfg/github-agent-proxy
+          cp bottles/github-agent-proxy.rb "$tap_dir/Formula/github-agent-proxy.rb"
+          if brew help trust >/dev/null 2>&1; then brew trust --formula "$formula"; fi
+          brew style "$formula"
+          # Test before publishing by seeding Homebrew's verified bottle cache.
+          cache="$(brew --cache --force-bottle "$formula")"
+          mkdir -p "$(dirname "$cache")"
+          cp "$(jq -r '.bottles[0].path' bottles/bottles.json)" "$cache"
+          brew install --force-bottle "$formula"
+          brew test --verbose "$formula"
+          brew info --json=v2 "$formula" | jq -e '.formulae[0].installed[0].poured_from_bottle == true'
 
   publish:
     if: github.ref_type == 'tag' && github.repository == 'jacobfg/github-agent-proxy'
-    needs: [source, bottle]
-    runs-on: macos-15
+    needs: [build, install]
+    runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: write
     concurrency:
       group: homebrew-release-publication
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
-      - uses: Homebrew/actions/setup-homebrew@c262868c096d909fc278daa87ed9772967331ea3
-      - uses: actions/setup-python@v6
+          persist-credentials: false
+      - uses: isometry/gobottle-setup@84e89fbdda871c4a0e31c81afeef9371e8089436
         with:
-          python-version: '3.13'
+          version: ${{ env.GOBOTTLE_VERSION_PIN }}
       - uses: actions/download-artifact@v8
         with:
-          name: homebrew-source
-          path: ${{ runner.temp }}/source/
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: homebrew-bottle-*
-          merge-multiple: true
-          path: ${{ runner.temp }}/bottles/
-      - name: Publish release assets and generated formula
+          name: homebrew-bottles
+          path: bottles/
+      - name: Publish tested bottle and update same-repository tap
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/homebrew_publish.py "$RUNNER_TEMP/source" "$RUNNER_TEMP/bottles"
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: homebrew-published-formula
-          path: ${{ runner.temp }}/bottles/github-agent-proxy.rb
-          if-no-files-found: ignore
+          GITHUB_TOKEN: ${{ github.token }}
+          GOBOTTLE_VERSION: ${{ github.ref_name }}
+        run: |
+          gobottle push --input bottles/bottles.json --output json > pushed.json
+          gobottle release --input pushed.json

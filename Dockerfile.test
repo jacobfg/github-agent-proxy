@@ -14,7 +14,7 @@ COPY cmd ./cmd
 COPY internal ./internal
 COPY scripts/test-live.sh ./scripts/test-live.sh
 COPY examples ./examples
-COPY THIRD_PARTY_NOTICES.md ./
+COPY notices.go THIRD_PARTY_NOTICES.md ./
 RUN go build -trimpath -o /usr/local/bin/github-agent-proxy ./cmd/github-agent-proxy \
     && go test -race -run '^$' ./...
 

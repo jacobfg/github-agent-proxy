@@ -1,0 +1,33 @@
+formula:
+  name: github-agent-proxy
+  description: Policy proxy for coding agents' GitHub and outbound HTTPS access
+  homepage: https://github.com/jacobfg/github-agent-proxy
+  caveats: |
+    Your trusted sandbox launcher supplies the policy, PAT file and TLS paths
+    and manages the proxy process. Installation does not start a proxy or
+    modify credentials or certificate trust. See:
+      https://github.com/jacobfg/github-agent-proxy/blob/main/docs/homebrew.md
+  test:
+    raw: |
+      assert_equal "github-agent-proxy #{version}\n", shell_output("#{bin}/github-agent-proxy --version")
+      assert_match "Copyright (c) 2018 Adam Scarr", shell_output("#{bin}/github-agent-proxy --licenses")
+      system bin/"github-agent-proxy", "init-ca", "--cert", testpath/"ca.pem", "--key", testpath/"ca-key.pem"
+      assert_match "BEGIN CERTIFICATE", (testpath/"ca.pem").read
+      assert_equal 0600, (testpath/"ca-key.pem").stat.mode & 0777
+source:
+  type: go
+  owner: jacobfg
+  repo: github-agent-proxy
+  build:
+    packages: [./cmd/github-agent-proxy]
+    ldflags: -s -w -X main.version={{.Version}}
+    cgo_enabled: false
+bottle:
+  # gobottle v0.9 selects Homebrew's oldest macOS tag; newer macOS can pour it.
+  platforms: [arm64_monterey]
+registry:
+  root_path: jacobfg/github-agent-proxy
+tap:
+  owner: jacobfg
+  repo: github-agent-proxy
+  branch: main

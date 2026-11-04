@@ -16,7 +16,7 @@ jobs:
         run: |
           git --version
           gh --version
-      - run: test -z "$(gofmt -l cmd internal)"
+      - run: test -z "$(gofmt -l notices.go cmd internal)"
       - run: go test -race -count=1 -timeout=3m ./...
       - run: go vet ./...
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'

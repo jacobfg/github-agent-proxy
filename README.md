@@ -32,7 +32,7 @@ The proxy resolves its identity with `/user` at startup. Each write obtains curr
 
 ## Install with Homebrew
 
-The repository also contains a source-based Homebrew formula. Native CI builds and tests real bottles for Intel and Apple Silicon macOS. The package contains the binary, docs and an example policy; your trusted sandbox launcher owns proxy startup, configuration and cleanup. See [Homebrew installation and releases](docs/homebrew.md).
+The repository also contains a Homebrew tap. gobottle builds Apple Silicon bottles, and native macOS CI verifies installation. The package contains only the binary; your trusted sandbox launcher supplies the policy and owns proxy startup and cleanup. See [Homebrew installation and releases](docs/homebrew.md).
 
 ```sh
 brew tap jacobfg/github-agent-proxy https://github.com/jacobfg/github-agent-proxy

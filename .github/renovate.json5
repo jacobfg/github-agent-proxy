@@ -1,7 +1,15 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
-  "enabledManagers": ["gomod", "dockerfile", "github-actions"],
+  "enabledManagers": ["gomod", "dockerfile", "github-actions", "custom.regex"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/homebrew\\.yml$/"],
+      "matchStrings": ["# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+GOBOTTLE_VERSION_PIN: (?<currentValue>\\S+)"],
+      "versioningTemplate": "semver"
+    }
+  ],
   "dependencyDashboard": true,
   "automerge": false,
   "prConcurrentLimit": 1,
