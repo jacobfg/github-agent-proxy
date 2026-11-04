@@ -4,11 +4,14 @@ This repository is both the source repository and a Homebrew tap. The formula bu
 
 ```sh
 brew tap jacobfg/github-agent-proxy https://github.com/jacobfg/github-agent-proxy
+brew trust --formula jacobfg/github-agent-proxy/github-agent-proxy
 brew install jacobfg/github-agent-proxy/github-agent-proxy
 github-agent-proxy --version
 ```
 
 Until the first stable release has been published, only `brew install --HEAD jacobfg/github-agent-proxy/github-agent-proxy` is available. Once bottles exist, normal installs use the matching bottle. Unsupported bottle platforms can build from source where the formula's macOS requirement is met.
+
+Older Homebrew versions without `brew trust` can skip that command.
 
 ## What is installed
 

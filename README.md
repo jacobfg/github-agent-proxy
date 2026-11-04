@@ -36,6 +36,7 @@ The repository also contains a source-based Homebrew formula. Native CI builds a
 
 ```sh
 brew tap jacobfg/github-agent-proxy https://github.com/jacobfg/github-agent-proxy
+brew trust --formula jacobfg/github-agent-proxy/github-agent-proxy # Skip on older Homebrew without trust.
 brew install jacobfg/github-agent-proxy/github-agent-proxy
 ```
 
