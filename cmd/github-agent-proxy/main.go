@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jacobfg/github-agent-proxy2"
 	"github.com/jacobfg/github-agent-proxy2/internal/proxy"
 )
 
@@ -32,6 +33,10 @@ func run() error {
 }
 
 func runArgs(args []string, out io.Writer) error {
+	if len(args) == 1 && args[0] == "--licenses" {
+		_, err := io.WriteString(out, githubagentproxy.ThirdPartyNotices)
+		return err
+	}
 	if len(args) == 1 && (args[0] == "--version" || args[0] == "version") {
 		_, err := fmt.Fprintf(out, "github-agent-proxy %s\n", version)
 		return err
@@ -49,7 +54,7 @@ func runArgs(args []string, out io.Writer) error {
 		return proxy.GenerateCA(*cert, *key)
 	}
 	if len(args) != 0 {
-		return fmt.Errorf("usage: github-agent-proxy [--version | init-ca --cert PATH --key PATH]")
+		return fmt.Errorf("usage: github-agent-proxy [--version | --licenses | init-ca --cert PATH --key PATH]")
 	}
 	c, err := proxy.FromEnv()
 	if err != nil {

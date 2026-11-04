@@ -1,4 +1,5 @@
 /bin/
+/bottles/
 /certs/
 *.env
 *.pem
