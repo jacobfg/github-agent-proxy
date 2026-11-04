@@ -111,9 +111,6 @@ func parsePolicy(b []byte) (*Policy, error) {
 			list[i] = strings.ToLower(s)
 		}
 	}
-	if len(p.GitHub.AllowedOrgs)+len(p.GitHub.AllowedUsers) == 0 {
-		return nil, fmt.Errorf("at least one allowed_orgs or allowed_users entry is required")
-	}
 	if !strings.HasSuffix(p.GitHub.BranchPrefix, "/") || !validBranch(p.GitHub.BranchPrefix+"probe") {
 		return nil, fmt.Errorf("invalid branch_prefix namespace")
 	}

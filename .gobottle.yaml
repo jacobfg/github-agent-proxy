@@ -11,6 +11,11 @@ formula:
     raw: |
       assert_equal "github-agent-proxy #{version}\n", shell_output("#{bin}/github-agent-proxy --version")
       assert_match "Copyright (c) 2018 Adam Scarr", shell_output("#{bin}/github-agent-proxy --licenses")
+      system bin/"github-agent-proxy", "init-policy", "--output", testpath/"policy.json"
+      policy = JSON.parse((testpath/"policy.json").read)
+      assert_equal [], policy.fetch("github").fetch("allowed_orgs")
+      assert_equal [], policy.fetch("github").fetch("allowed_users")
+      assert_equal [], policy.fetch("github").fetch("write_allow_repos")
       system bin/"github-agent-proxy", "init-ca", "--cert", testpath/"ca.pem", "--key", testpath/"ca-key.pem"
       assert_match "BEGIN CERTIFICATE", (testpath/"ca.pem").read
       assert_equal 0600, (testpath/"ca-key.pem").stat.mode & 0777

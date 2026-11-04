@@ -61,9 +61,6 @@ func FromEnv() (Config, error) {
 	if c.Token == "" || strings.ContainsAny(c.Token, "\r\n") {
 		return c, fmt.Errorf("a GitHub token is required")
 	}
-	if len(c.Organizations) == 0 && len(c.Users) == 0 {
-		return c, fmt.Errorf("at least one of ALLOWED_ORGS or ALLOWED_USERS must be non-empty")
-	}
 	if c.BranchPrefix == "" || !validBranch(c.BranchPrefix+"probe") || !strings.HasSuffix(c.BranchPrefix, "/") {
 		return c, fmt.Errorf("BRANCH_PREFIX must be a valid branch namespace ending in / (for example agent/)")
 	}

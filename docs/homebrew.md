@@ -13,23 +13,19 @@ Older Homebrew versions without `brew trust` can skip that command. Until the fi
 
 ## What is installed
 
-The package installs only the proxy binary. Third-party notices are embedded and available with `github-agent-proxy --licenses`. Go is needed only when building from source. No policy is bundled: start from the repository's [example policy](../examples/homebrew-policy.json) and [policy guide](policy.md). The example authorizes no repository writes until you configure the owner and repository rules.
+The package installs only the proxy binary. Third-party notices are embedded and available with `github-agent-proxy --licenses`. Go is needed only when building from source. No policy file is installed. Run `github-agent-proxy init-policy --output policy.json` to create a new read-only policy, then configure it using the [policy guide](policy.md). The default JSON is embedded in the binary; existing files are never overwritten.
 
 There is no Homebrew service or launchd definition. Installation does not create credentials, configure certificate trust, or start a process.
 
-## Per-agent process ownership
+## Environment integration
 
-A trusted launcher should start one proxy per agent outside the sandbox, supply `POLICY_FILE`, `GITHUB_TOKEN_FILE`, `TLS_CERT_FILE` and `TLS_KEY_FILE`, and select a separate loopback port for each instance. Interception mode additionally needs the interception CA paths.
-
-The launcher must wait for readiness, configure the agent's proxy and trust settings, restrict the sandbox to that instance's port, forward termination signals and clean up the child proxy when the agent exits. Policies, PAT files and signing keys must remain outside the sandbox's readable/writable paths. Instances can share operator-controlled CA and credential files; separate trust roots are unnecessary.
-
-The companion `run-in-sandbox` still selects the shared 8443 service (or the opt-in 8444 trial). This packaging change does not implement per-agent supervision in that launcher.
+The consumer owns proxy lifecycle, policies, credentials, TLS trust and agent configuration. Local Safehouse integration and migration tools live in `agent-safehouse-custom/proxy/`; the formula does not install or run them.
 
 ## Build and release
 
 `.gobottle.yaml` defines the build, bottle platform, formula tests, registry and tap. Edit that configuration rather than the generated formula after the first release. The workflow pins gobottle, which is currently experimental; Renovate proposes version updates.
 
-Pull requests run the Go race suite and vet, cross-compile with `CGO_ENABLED=0` on Linux, and generate a bottle and preview formula without publishing. An Apple Silicon macOS runner installs the bottle from Homebrew's checksum-verified cache and runs `brew test`, checking the version, embedded notices and CA generation. It does not build a Go toolchain on macOS.
+Pull requests run the Go race suite and vet, cross-compile with `CGO_ENABLED=0` on Linux, and generate a bottle and preview formula without publishing. An Apple Silicon macOS runner installs the bottle from Homebrew's checksum-verified cache and runs `brew test`, checking the version, embedded notices, default policy generation and CA generation. It does not build a Go toolchain on macOS.
 
 gobottle v0.9 labels macOS bottles with Homebrew's oldest available tag (`arm64_monterey`). Homebrew can install that bottle on newer macOS; our supported and tested baseline is macOS 15.
 

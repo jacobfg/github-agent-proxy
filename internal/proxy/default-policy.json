@@ -7,8 +7,8 @@
   },
   "github": {
     "allowed_orgs": [],
-    "allowed_users": ["CHANGE-ME"],
-    "branch_prefix": "agp/",
+    "allowed_users": [],
+    "branch_prefix": "agent/",
     "write_allow_repos": [],
     "write_deny_repos": []
   }
