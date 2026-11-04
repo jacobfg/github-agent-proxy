@@ -43,5 +43,11 @@ if brew help trust >/dev/null 2>&1; then
 fi
 bottles=("$bottle_dir"/*.bottle.tar.gz)
 test "${#bottles[@]}" -eq 1
-brew install "${bottles[0]}"
+# Exercise the same formula metadata/cache path as a released bottle install.
+# This also works with Homebrew releases that reject local bottle path arguments.
+brew bottle --merge --write --no-commit "$bottle_dir"/*.bottle.json
+bottle_cache="$(brew --cache --force-bottle "$formula")"
+mkdir -p "$(dirname "$bottle_cache")"
+cp "${bottles[0]}" "$bottle_cache"
+brew install --force-bottle "$formula"
 brew test --verbose "$formula"
