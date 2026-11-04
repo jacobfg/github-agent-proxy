@@ -1,0 +1,123 @@
+name: Homebrew bottles
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['[0-9]*.[0-9]*.[0-9]*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: homebrew-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: '1'
+  HOMEBREW_NO_INSTALL_CLEANUP: '1'
+  HOMEBREW_NO_ENV_HINTS: '1'
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare checked source archive and formula
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          args=(--output "$RUNNER_TEMP/source")
+          if [[ -n "$RELEASE_TAG" ]]; then args+=(--release "$RELEASE_TAG"); fi
+          python3 scripts/homebrew_release.py prepare "${args[@]}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: homebrew-source
+          path: ${{ runner.temp }}/source/
+          if-no-files-found: error
+          retention-days: 14
+
+  bottle:
+    needs: source
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: Homebrew/actions/setup-homebrew@c262868c096d909fc278daa87ed9772967331ea3
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v8
+        with:
+          name: homebrew-source
+          path: ${{ runner.temp }}/source/
+      - name: Install build and test tools
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          test "$(uname -m)" = "$EXPECTED_ARCH"
+          brew install go gh
+          go version
+          git --version
+          gh --version
+      - name: Test before bottling
+        run: |
+          test -z "$(gofmt -l cmd internal)"
+          go test -race -count=1 -timeout=3m ./...
+          go vet ./...
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Build formula, bottle, and verify bottle reinstall
+        run: bash scripts/homebrew-build.sh "$RUNNER_TEMP/source" "$RUNNER_TEMP/bottles"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: homebrew-bottle-${{ matrix.arch }}
+          path: ${{ runner.temp }}/bottles/*.bottle.*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: github.ref_type == 'tag' && github.repository == 'jacobfg/github-agent-proxy'
+    needs: [source, bottle]
+    runs-on: macos-15
+    permissions:
+      contents: write
+    concurrency:
+      group: homebrew-release-publication
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: Homebrew/actions/setup-homebrew@c262868c096d909fc278daa87ed9772967331ea3
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v8
+        with:
+          name: homebrew-source
+          path: ${{ runner.temp }}/source/
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: homebrew-bottle-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/bottles/
+      - name: Publish release assets and generated formula
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/homebrew_publish.py "$RUNNER_TEMP/source" "$RUNNER_TEMP/bottles"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: homebrew-published-formula
+          path: ${{ runner.temp }}/bottles/github-agent-proxy.rb
+          if-no-files-found: ignore

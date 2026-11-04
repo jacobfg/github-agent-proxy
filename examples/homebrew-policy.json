@@ -1,0 +1,15 @@
+{
+  "https_mode": "tunnel",
+  "destinations": {
+    "deny_hosts": [],
+    "deny_host_regexes": [],
+    "deny_ips": []
+  },
+  "github": {
+    "allowed_orgs": [],
+    "allowed_users": ["CHANGE-ME"],
+    "branch_prefix": "agp/",
+    "write_allow_repos": [],
+    "write_deny_repos": []
+  }
+}

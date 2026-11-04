@@ -30,6 +30,17 @@ Repository creation/deletion/settings, Actions dispatches, releases, tags, revie
 
 The proxy resolves its identity with `/user` at startup. Each write obtains current repository/resource metadata before forwarding. Lookup failures deny the write. GraphQL aliases, fragments, variable defaults, and every field in a mutation are checked. All Git ref commands are checked before any receive-pack bytes are sent upstream; the pack itself streams after validation. Pushes from shallow clones are supported: leading `shallow <commit-id>` history-boundary declarations are preserved, and every ref update must still pass the branch policy.
 
+## Install with Homebrew
+
+The repository also contains a source-based Homebrew formula. Native CI builds and tests real bottles for Intel and Apple Silicon macOS. The package contains the binary, docs and an example policy; your trusted sandbox launcher owns proxy startup, configuration and cleanup. See [Homebrew installation and releases](docs/homebrew.md).
+
+```sh
+brew tap jacobfg/github-agent-proxy https://github.com/jacobfg/github-agent-proxy
+brew install jacobfg/github-agent-proxy/github-agent-proxy
+```
+
+Before the first stable bottle release, use `brew install --HEAD jacobfg/github-agent-proxy/github-agent-proxy` after the packaging changes are merged.
+
 ## Start with Apple Container
 
 The [justfile](justfile) provides local development shortcuts. GitHub Actions continues to run its commands directly. Install `just` with `brew install just`, copy `.env.example` to `.env`, and set `ALLOWED_USERS=jacobfg` for personal-repository testing, `ALLOWED_ORGS` for organisations, or both. The file contains policy settings only; keep the PAT in the separate private directory.
