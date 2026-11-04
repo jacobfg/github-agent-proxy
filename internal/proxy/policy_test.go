@@ -122,7 +122,6 @@ func TestPolicyValidation(t *testing.T) {
 		`{}`, `null`, good + `{}`, strings.Replace(good, `"tunnel"`, `"typo"`, 1),
 		strings.Replace(good, `"github":`, `"extra":true,"github":`, 1),
 		strings.Replace(good, `["jacobfg"]`, `null`, 1),
-		strings.Replace(good, `["jacobfg"]`, `[]`, 1),
 		strings.Replace(good, `"agp/"`, `"main"`, 1),
 		strings.Replace(good, `"branch_prefix":`, `"allowed_users":[],"branch_prefix":`, 1),
 		strings.Replace(good, `"branch_prefix":`, `"write_deny_repos":["zendesk/*"],"branch_prefix":`, 1),

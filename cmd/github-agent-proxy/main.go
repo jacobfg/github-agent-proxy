@@ -33,6 +33,30 @@ func run() error {
 }
 
 func runArgs(args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "init-policy" {
+		flags := flag.NewFlagSet("init-policy", flag.ContinueOnError)
+		output := flags.String("output", "-", "output file; - writes JSON to stdout")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return fmt.Errorf("usage: github-agent-proxy init-policy [--output PATH]")
+		}
+		if *output == "-" {
+			_, err := io.WriteString(out, proxy.DefaultPolicy())
+			return err
+		}
+		f, err := os.OpenFile(*output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			return fmt.Errorf("create policy: %w", err)
+		}
+		_, writeErr := io.WriteString(f, proxy.DefaultPolicy())
+		closeErr := f.Close()
+		if writeErr != nil {
+			return writeErr
+		}
+		return closeErr
+	}
 	if len(args) == 1 && args[0] == "--licenses" {
 		_, err := io.WriteString(out, githubagentproxy.ThirdPartyNotices)
 		return err
@@ -54,7 +78,7 @@ func runArgs(args []string, out io.Writer) error {
 		return proxy.GenerateCA(*cert, *key)
 	}
 	if len(args) != 0 {
-		return fmt.Errorf("usage: github-agent-proxy [--version | --licenses | init-ca --cert PATH --key PATH]")
+		return fmt.Errorf("usage: github-agent-proxy [--version | --licenses | init-policy [--output PATH] | init-ca --cert PATH --key PATH]")
 	}
 	c, err := proxy.FromEnv()
 	if err != nil {

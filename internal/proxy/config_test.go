@@ -1,6 +1,9 @@
 package proxy
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestConfiguration(t *testing.T) {
 	for _, tt := range []struct {
@@ -8,7 +11,7 @@ func TestConfiguration(t *testing.T) {
 		valid            bool
 	}{
 		{"defaults", "ALLOWED_ORGS", "acme, Other", true},
-		{"missing orgs", "ALLOWED_ORGS", "", false},
+		{"read only without owners", "ALLOWED_ORGS", "", true},
 		{"missing prefix", "BRANCH_PREFIX", "", false},
 		{"no namespace boundary", "BRANCH_PREFIX", "agent", false},
 		{"invalid prefix", "BRANCH_PREFIX", "agent/../", false},
@@ -39,8 +42,8 @@ func TestOwnerAllowlistConfiguration(t *testing.T) {
 		{"orgs only", " Acme, OTHER ", "", true},
 		{"users only", "", " JacobFG, Bot ", true},
 		{"both", "Acme", "JacobFG", true},
-		{"neither", "", "", false},
-		{"empty entries", " , ", " , ", false},
+		{"neither", "", "", true},
+		{"empty entries", " , ", " , ", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			for k, v := range map[string]string{"ALLOWED_ORGS": tt.orgs, "ALLOWED_USERS": tt.users, "BRANCH_PREFIX": "agent/", "GITHUB_TOKEN": "secret", "GITHUB_TOKEN_FILE": "", "TLS_CERT_FILE": "cert.pem", "TLS_KEY_FILE": "key.pem", "LISTEN_ADDR": "", "MAX_PUSH_BYTES": "", "ALLOW_CONTAINER_BIND": ""} {
@@ -50,11 +53,14 @@ func TestOwnerAllowlistConfiguration(t *testing.T) {
 			if (err == nil) != tt.valid {
 				t.Fatalf("error=%v", err)
 			}
-			if tt.orgs != "" && tt.valid && !c.Organizations["acme"] {
+			if strings.Contains(tt.orgs, "Acme") && !c.Organizations["acme"] {
 				t.Fatal("organisation login was not normalized")
 			}
-			if tt.users != "" && tt.valid && !c.Users["jacobfg"] {
+			if strings.Contains(tt.users, "JacobFG") && !c.Users["jacobfg"] {
 				t.Fatal("user login was not normalized")
+			}
+			if !strings.Contains(tt.orgs, "Acme") && !strings.Contains(tt.users, "JacobFG") && (len(c.Organizations) != 0 || len(c.Users) != 0) {
+				t.Fatal("empty owner lists authorized an owner")
 			}
 		})
 	}
