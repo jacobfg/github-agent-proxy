@@ -37,6 +37,10 @@ brew test --verbose "$formula"
 )
 # Prove that the produced bottle can be poured and tested, not just compiled.
 brew uninstall "$formula"
+# Recent Homebrew versions remove formula-specific trust on uninstall.
+if brew help trust >/dev/null 2>&1; then
+  brew trust --formula "$formula"
+fi
 bottles=("$bottle_dir"/*.bottle.tar.gz)
 test "${#bottles[@]}" -eq 1
 brew install "${bottles[0]}"
