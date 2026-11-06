@@ -1,10 +1,10 @@
 # Policy configuration and examples
 
-`POLICY_FILE` selects an operator-owned JSON file loaded once at startup. Restart the proxy after editing it. See [the complete example](../examples/policy.json). Keep the file outside the agent's writable filesystem.
+A policy file is mandatory. Select an operator-owned JSON file with `--policy-file PATH` or `POLICY_FILE`; the explicit flag takes precedence. The file is loaded once at startup. Restart the proxy after editing it. See [the complete example](../examples/policy.json). Keep the file outside the agent's writable filesystem.
 
-JSON is authoritative: remove `ALLOWED_ORGS`, `ALLOWED_USERS` and `BRANCH_PREFIX` from the process environment. Setting a nonempty legacy policy variable alongside `POLICY_FILE` fails startup. Without `POLICY_FILE`, the existing environment configuration and non-GitHub tunnel mode continue working.
+JSON is the only source for authorization settings. Owner lists and the branch prefix belong under `github` in this file. Missing, empty, unreadable or invalid policy files fail startup; there is no environment-based or implicit policy fallback. The setup and informational subcommands can run without a policy file.
 
-PAT/token files, `LISTEN_ADDR`, listener certificate paths, signing-key paths and `MAX_PUSH_BYTES` remain operational environment settings. Neither JSON nor `/status` contains credentials. Invalid/unknown fields, duplicate keys, null values, malformed rules and unreadable files fail startup. Empty owner lists are valid and authorize no GitHub writes. An empty repository write allowlist also denies all GitHub writes, even after owners are added.
+Token files, listener addresses, certificate paths, signing-key paths and push-size limits are operational settings, supplied through [flags or environment variables](../README.md#configuration). A raw PAT can only be supplied through `GITHUB_TOKEN` or a token file. Neither JSON nor `/status` contains credentials. Invalid/unknown fields, duplicate keys, null values, malformed rules and unreadable files fail startup. Empty owner lists are valid and authorize no GitHub writes. An empty repository write allowlist also denies all GitHub writes, even after owners are added.
 
 ## Generate a read-only policy
 
@@ -140,9 +140,9 @@ Forwarded requests preserve the client's User-Agent. If the client omits it or s
 
 ## Validation and diagnostics
 
-`GET /status` on the loopback listener reports effective policy, mode, minimum TLS and the interception CA's SHA-256 fingerprint. `all_https_tls_enforced` distinguishes full interception from legacy tunnelling. A `null` repository allowlist in status means it was omitted in the input; status is diagnostic output, not a reusable configuration file. `/healthz` is local liveness and makes no GitHub requests.
+`GET /status` on the loopback listener reports effective policy, mode, minimum TLS and the interception CA's SHA-256 fingerprint. `all_https_tls_enforced` distinguishes full interception from tunnel mode. A `null` repository allowlist in status means it was omitted in the input; status is diagnostic output, not a reusable configuration file. `/healthz` is local liveness and makes no GitHub requests.
 
-Run `go test -race -count=1 -timeout=3m ./...` and `go vet ./...`. The [development guide](development.md) describes the real CLI tests against local mocks and `TestConfiguredPolicy`, which reports allow/block results for supplied JSON or legacy environment settings without using real credentials.
+Run `go test -race -count=1 -timeout=3m ./...` and `go vet ./...`. The [development guide](development.md) describes the real CLI tests against local mocks and `TestConfiguredPolicy`, which reports allow/block results for the supplied JSON policy without using real credentials.
 
 The documented hostname/IP examples are covered by `TestDestinationExamples` and `TestCheckedDialDNS`; `TestDocumentedPolicyFile` validates the complete example. Repository behavior is covered by `TestRepositoryPolicyAcrossAPIs`, `TestCrossRepositoryPRPolicy` and CLI integration tests. `TestDefaultPolicyReadOnly` validates the generated default and its authorization behavior. TLS, HTTP/2, streaming, upgrades, certificate expiry and shutdown have local TLS integration tests.
 

@@ -14,7 +14,7 @@ import (
 // handler. Owner type and resource metadata are fixtures, never live lookups.
 func TestConfiguredPolicy(t *testing.T) {
 	if os.Getenv("POLICY_CHECK") != "1" {
-		t.Skip("set POLICY_CHECK=1, POLICY_CHECK_REPO, POLICY_CHECK_OWNER_TYPE, ALLOWED_ORGS/ALLOWED_USERS, and BRANCH_PREFIX for an offline policy report")
+		t.Skip("set POLICY_CHECK=1, POLICY_CHECK_REPO, POLICY_CHECK_OWNER_TYPE, POLICY_FILE for an offline policy report")
 	}
 	repo := os.Getenv("POLICY_CHECK_REPO")
 	if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$`).MatchString(repo) {

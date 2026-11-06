@@ -17,31 +17,50 @@ type Config struct {
 	CACertFile, CAKeyFile                          string
 }
 
-func FromEnv() (Config, error) {
-	c := Config{Listen: os.Getenv("LISTEN_ADDR"), Token: os.Getenv("GITHUB_TOKEN"), BranchPrefix: os.Getenv("BRANCH_PREFIX"), CertFile: os.Getenv("TLS_CERT_FILE"), KeyFile: os.Getenv("TLS_KEY_FILE"), Organizations: parseLogins(os.Getenv("ALLOWED_ORGS")), Users: parseLogins(os.Getenv("ALLOWED_USERS")), MaxPushBytes: 1 << 30}
-	c.CACertFile, c.CAKeyFile = os.Getenv("INTERCEPT_CA_CERT_FILE"), os.Getenv("INTERCEPT_CA_KEY_FILE")
-	if file := os.Getenv("POLICY_FILE"); file != "" {
-		for _, key := range []string{"ALLOWED_ORGS", "ALLOWED_USERS", "BRANCH_PREFIX"} {
-			if os.Getenv(key) != "" {
-				return c, fmt.Errorf("%s conflicts with POLICY_FILE; put authorization settings in JSON", key)
-			}
-		}
-		var err error
-		c.Policy, err = loadPolicy(file)
-		if err != nil {
-			return c, err
-		}
-		c.Organizations = parseLogins(strings.Join(c.Policy.GitHub.AllowedOrgs, ","))
-		c.Users = parseLogins(strings.Join(c.Policy.GitHub.AllowedUsers, ","))
-		c.BranchPrefix = c.Policy.GitHub.BranchPrefix
+// RuntimeOptions contains operational inputs, before loading policy and secrets.
+type RuntimeOptions struct {
+	PolicyFile, Listen, Token, TokenFile     string
+	CertFile, KeyFile, CACertFile, CAKeyFile string
+	MaxPushBytes                             string
+	AllowContainerBind                       bool
+}
+
+func RuntimeOptionsFromEnv() RuntimeOptions {
+	return RuntimeOptions{
+		PolicyFile: os.Getenv("POLICY_FILE"), Listen: os.Getenv("LISTEN_ADDR"),
+		Token: os.Getenv("GITHUB_TOKEN"), TokenFile: os.Getenv("GITHUB_TOKEN_FILE"),
+		CertFile: os.Getenv("TLS_CERT_FILE"), KeyFile: os.Getenv("TLS_KEY_FILE"),
+		CACertFile: os.Getenv("INTERCEPT_CA_CERT_FILE"), CAKeyFile: os.Getenv("INTERCEPT_CA_KEY_FILE"),
+		MaxPushBytes: os.Getenv("MAX_PUSH_BYTES"), AllowContainerBind: os.Getenv("ALLOW_CONTAINER_BIND") == "1",
 	}
+}
+
+func FromEnv() (Config, error) {
+	return FromOptions(RuntimeOptionsFromEnv())
+}
+
+func FromOptions(options RuntimeOptions) (Config, error) {
+	c := Config{Listen: options.Listen, Token: options.Token, CertFile: options.CertFile, KeyFile: options.KeyFile, MaxPushBytes: 1 << 30}
+	c.CACertFile, c.CAKeyFile = options.CACertFile, options.CAKeyFile
+	file := options.PolicyFile
+	if strings.TrimSpace(file) == "" {
+		return c, fmt.Errorf("POLICY_FILE is required (or use --policy-file); create a policy with github-agent-proxy init-policy --output PATH")
+	}
+	var err error
+	c.Policy, err = loadPolicy(file)
+	if err != nil {
+		return c, err
+	}
+	c.Organizations = loginSet(c.Policy.GitHub.AllowedOrgs)
+	c.Users = loginSet(c.Policy.GitHub.AllowedUsers)
+	c.BranchPrefix = c.Policy.GitHub.BranchPrefix
 	if c.interceptAll() && (c.CACertFile == "" || c.CAKeyFile == "") {
 		return c, fmt.Errorf("interception requires INTERCEPT_CA_CERT_FILE and INTERCEPT_CA_KEY_FILE")
 	}
 	if c.Listen == "" {
 		c.Listen = "127.0.0.1:8443"
 	}
-	if file := os.Getenv("GITHUB_TOKEN_FILE"); file != "" {
+	if file := options.TokenFile; file != "" {
 		if c.Token != "" {
 			return c, fmt.Errorf("set only one of GITHUB_TOKEN and GITHUB_TOKEN_FILE")
 		}
@@ -51,7 +70,7 @@ func FromEnv() (Config, error) {
 		}
 		c.Token = strings.TrimSpace(string(b))
 	}
-	if value := os.Getenv("MAX_PUSH_BYTES"); value != "" {
+	if value := options.MaxPushBytes; value != "" {
 		n, err := strconv.ParseInt(value, 10, 64)
 		if err != nil || n < 1024 {
 			return c, fmt.Errorf("MAX_PUSH_BYTES must be at least 1024")
@@ -61,9 +80,6 @@ func FromEnv() (Config, error) {
 	if c.Token == "" || strings.ContainsAny(c.Token, "\r\n") {
 		return c, fmt.Errorf("a GitHub token is required")
 	}
-	if c.BranchPrefix == "" || !validBranch(c.BranchPrefix+"probe") || !strings.HasSuffix(c.BranchPrefix, "/") {
-		return c, fmt.Errorf("BRANCH_PREFIX must be a valid branch namespace ending in / (for example agent/)")
-	}
 	if c.CertFile == "" || c.KeyFile == "" {
 		return c, fmt.Errorf("TLS_CERT_FILE and TLS_KEY_FILE are required")
 	}
@@ -72,15 +88,15 @@ func FromEnv() (Config, error) {
 		return c, fmt.Errorf("invalid LISTEN_ADDR")
 	}
 	ip := net.ParseIP(host)
-	if ip == nil || (!ip.IsLoopback() && os.Getenv("ALLOW_CONTAINER_BIND") != "1") {
+	if ip == nil || (!ip.IsLoopback() && !options.AllowContainerBind) {
 		return c, fmt.Errorf("LISTEN_ADDR must be a loopback IP; isolated containers require ALLOW_CONTAINER_BIND=1")
 	}
 	return c, nil
 }
 
-func parseLogins(value string) map[string]bool {
+func loginSet(values []string) map[string]bool {
 	logins := map[string]bool{}
-	for _, login := range strings.Split(value, ",") {
+	for _, login := range values {
 		if login = strings.ToLower(strings.TrimSpace(login)); login != "" {
 			logins[login] = true
 		}
@@ -89,7 +105,7 @@ func parseLogins(value string) map[string]bool {
 }
 
 // GitHub's owner type determines which allowlist applies. A username in
-// ALLOWED_ORGS must never implicitly grant access to personal repositories.
+// the organisation list must never grant access to personal repositories.
 func (p *Proxy) ownerAllowed(ownerType, login string) bool {
 	switch ownerType {
 	case "Organization":

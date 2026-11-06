@@ -137,19 +137,12 @@ func TestPolicyValidation(t *testing.T) {
 	if err := os.WriteFile(file, []byte(good), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for key, value := range map[string]string{"POLICY_FILE": file, "GITHUB_TOKEN": "fake", "GITHUB_TOKEN_FILE": "", "TLS_CERT_FILE": "cert", "TLS_KEY_FILE": "key", "ALLOWED_ORGS": "", "ALLOWED_USERS": "", "BRANCH_PREFIX": "", "LISTEN_ADDR": "", "MAX_PUSH_BYTES": ""} {
+	for key, value := range map[string]string{"POLICY_FILE": file, "GITHUB_TOKEN": "fake", "GITHUB_TOKEN_FILE": "", "TLS_CERT_FILE": "cert", "TLS_KEY_FILE": "key", "LISTEN_ADDR": "", "MAX_PUSH_BYTES": ""} {
 		t.Setenv(key, value)
 	}
 	c, err := FromEnv()
 	if err != nil || !c.Users["jacobfg"] || c.BranchPrefix != "agp/" {
 		t.Fatalf("JSON config: %v", err)
-	}
-	for _, key := range []string{"ALLOWED_ORGS", "ALLOWED_USERS", "BRANCH_PREFIX"} {
-		t.Setenv(key, "conflict")
-		if _, err := FromEnv(); err == nil {
-			t.Error("env conflict accepted", key)
-		}
-		t.Setenv(key, "")
 	}
 }
 
@@ -241,7 +234,7 @@ func TestDocumentedPolicyFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &Proxy{config: Config{Policy: policy, Organizations: parseLogins(strings.Join(policy.GitHub.AllowedOrgs, ",")), Users: parseLogins(strings.Join(policy.GitHub.AllowedUsers, ","))}}
+	p := &Proxy{config: Config{Policy: policy, Organizations: loginSet(policy.GitHub.AllowedOrgs), Users: loginSet(policy.GitHub.AllowedUsers)}}
 	if !p.repositoryAllowed("User", "jacobfg", "permission-test") || p.repositoryAllowed("Organization", "zendesk", "protected") || p.repositoryAllowed("Organization", "zendesk", "other") {
 		t.Fatal("documented repository policy differs")
 	}

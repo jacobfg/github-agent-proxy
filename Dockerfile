@@ -7,7 +7,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
-COPY notices.go THIRD_PARTY_NOTICES.md ./
+COPY notices.go skill.go THIRD_PARTY_NOTICES.md ./
+COPY skills ./skills
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /github-agent-proxy ./cmd/github-agent-proxy
 
 FROM scratch

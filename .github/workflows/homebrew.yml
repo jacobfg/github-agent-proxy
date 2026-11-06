@@ -36,7 +36,7 @@ jobs:
         run: |
           git --version
           gh --version
-          test -z "$(gofmt -l notices.go cmd internal)"
+          test -z "$(gofmt -l notices.go skill.go cmd internal)"
           go test -race -count=1 -timeout=3m ./...
           go vet ./...
       - name: Select version and source

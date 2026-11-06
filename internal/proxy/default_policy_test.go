@@ -15,7 +15,6 @@ func TestDefaultPolicyReadOnly(t *testing.T) {
 	}
 	for k, v := range map[string]string{
 		"POLICY_FILE": file, "GITHUB_TOKEN": "real-secret", "GITHUB_TOKEN_FILE": "",
-		"ALLOWED_ORGS": "", "ALLOWED_USERS": "", "BRANCH_PREFIX": "",
 		"TLS_CERT_FILE": "cert", "TLS_KEY_FILE": "key", "LISTEN_ADDR": "",
 		"INTERCEPT_CA_CERT_FILE": "", "INTERCEPT_CA_KEY_FILE": "", "MAX_PUSH_BYTES": "",
 	} {
@@ -31,7 +30,7 @@ func TestDefaultPolicyReadOnly(t *testing.T) {
 	if d := c.Policy.Destinations; len(d.DenyHosts)+len(d.DenyHostRegexes)+len(d.DenyIPs) != 0 {
 		t.Fatal("default blocks destinations")
 	}
-	for _, variant := range []string{"default", "only owner added", "only repository added", "ownerless legacy"} {
+	for _, variant := range []string{"default", "only owner added", "only repository added"} {
 		t.Run(variant, func(t *testing.T) {
 			p, writes := fixture(t)
 			p.config = c
@@ -42,8 +41,6 @@ func TestDefaultPolicyReadOnly(t *testing.T) {
 				p.config.Organizations = map[string]bool{"acme": true}
 			case "only repository added":
 				policy.GitHub.WriteAllowRepos = []string{"acme/repo"}
-			case "ownerless legacy":
-				p.config.Policy = nil
 			}
 			if request(p, "POST", "/repos/acme/repo/issues", `{"title":"test"}`).Code != http.StatusForbidden {
 				t.Fatal("REST write permitted")

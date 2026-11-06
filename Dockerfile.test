@@ -13,7 +13,8 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 COPY examples ./examples
-COPY notices.go THIRD_PARTY_NOTICES.md ./
+COPY notices.go skill.go THIRD_PARTY_NOTICES.md ./
+COPY skills ./skills
 RUN go build -trimpath -o /usr/local/bin/github-agent-proxy ./cmd/github-agent-proxy \
     && go test -race -run '^$' ./...
 

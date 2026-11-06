@@ -21,8 +21,7 @@ func TestLocalStatus(t *testing.T) {
 		return nil, nil
 	})
 	// Diagnostics reflect the loaded configuration, not later env changes.
-	t.Setenv("ALLOWED_ORGS", "different")
-	t.Setenv("BRANCH_PREFIX", "different/")
+	t.Setenv("POLICY_FILE", "/nonexistent/later-policy.json")
 	for _, host := range []string{"localhost", "127.0.0.1:8443", "[::1]:8443"} {
 		r := httptest.NewRequest("GET", "/status", nil)
 		r.Host = host
