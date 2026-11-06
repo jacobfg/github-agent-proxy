@@ -1,4 +1,4 @@
-// Package githubagentproxy contains notices distributed with the proxy binary.
+// Package githubagentproxy contains resources embedded in the proxy binary.
 package githubagentproxy
 
 import _ "embed"

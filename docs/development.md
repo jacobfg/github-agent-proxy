@@ -18,8 +18,10 @@ The regular suite uses fixed fixtures; exporting your allowlists does not change
 | --- | --- |
 | `TestLocalStatus`, `TestLocalHealthAndMethods`, `TestDiagnosticsDoNotShadowGitHub` | Active policy without secrets, local health/shutdown, method restrictions, no upstream calls, GitHub routing preserved |
 | `TestInitPolicy`, `TestDefaultPolicyReadOnly` | Credential-free policy generation, exclusive file creation, read-only defaults through the real parser and REST/GraphQL/Git authorization |
-| `TestConfiguration` | Required credentials/TLS/prefix, default settings, loopback binding, invalid push limits |
-| `TestOwnerAllowlistConfiguration` | Organisations only, users only, both, neither, empty entries, login normalization |
+| `TestInstallSkill`, `TestInstallSkillRejectsExistingPaths`, `TestInstallSkillArguments` | Embedded skill display/installation without service configuration, matching stdout and installed content, preservation of existing destinations and symlinks, argument validation and help |
+| `TestConfiguration`, `TestPolicyFileFailures`, `TestRunRequiresPolicyFile` | Mandatory policy, malformed/missing files, invalid branch prefix, required credentials/TLS, loopback binding, invalid push limits |
+| `TestServiceFlagPrecedence`, `TestServiceFlagsValidation`, `TestServiceMixedConfiguration`, `TestHelpDoesNotRequireServiceConfiguration` | Flags override environment before validation, explicit empty/false overrides, mixed inputs, credential conflicts, invalid arguments, credential-free help |
+| `TestOwnerAllowlistConfiguration` | Organisations only, users only, both, neither, read-only empty lists, login normalization |
 | `TestOwnerAllowlists` | REST, GraphQL, and pushes under each owner-list combination; wrong account types; author and branch restrictions |
 | `TestRESTPolicy` | Issue/PR creation and edits, comments, refs, contents, branch rename; forbidden operations, duplicate JSON, query overrides, ambiguous paths |
 | `TestGraphQLPolicy` | Queries/mutations, authorship, PR heads, refs, aliases, defaults, fragments/cycles, mixed mutations, directives, duplicate inputs, operation selection, missing metadata |
@@ -39,32 +41,34 @@ List test names with `go test ./internal/proxy -list .`. Run with `-v` to see na
 
 ### Check your own allowlists offline
 
-`TestConfiguredPolicy` accepts `ALLOWED_ORGS`, `ALLOWED_USERS`, and `BRANCH_PREFIX`. Supply `POLICY_CHECK_REPO=OWNER/REPO` and `POLICY_CHECK_OWNER_TYPE=User` or `Organization` to describe the repository being simulated. The owner type is explicit so the test can detect a personal username placed in the organisation list, and vice versa.
+`TestConfiguredPolicy` requires `POLICY_FILE`, pointing to a valid JSON policy. Supply `POLICY_CHECK_REPO=OWNER/REPO` and `POLICY_CHECK_OWNER_TYPE=User` or `Organization` to describe the repository being simulated. The owner type is explicit so the test can detect a personal username placed in the organisation list, and vice versa.
+
+Generate a read-only policy, or use an existing operator-owned policy:
 
 ```sh
+github-agent-proxy init-policy --output policy.json
 POLICY_CHECK=1 \
 POLICY_CHECK_REPO=jacobfg/permission-test \
 POLICY_CHECK_OWNER_TYPE=User \
-ALLOWED_ORGS= ALLOWED_USERS=jacobfg BRANCH_PREFIX=agent/ \
+POLICY_FILE="$PWD/policy.json" \
 go test -v -count=1 ./internal/proxy -run '^TestConfiguredPolicy$'
 ```
 
-Or rebuild and run the test image:
+Or build and run the test image, mounting only the policy:
 
 ```sh
 docker build -f Dockerfile.test -t github-agent-proxy:test .
 docker run --rm --network none \
+  --mount "type=bind,source=$PWD/policy.json,target=/run/policy.json,readonly" \
+  -e POLICY_FILE=/run/policy.json \
   -e POLICY_CHECK=1 \
   -e POLICY_CHECK_REPO=jacobfg/permission-test \
   -e POLICY_CHECK_OWNER_TYPE=User \
-  -e ALLOWED_ORGS= \
-  -e ALLOWED_USERS=jacobfg \
-  -e BRANCH_PREFIX=agent/ \
   github-agent-proxy:test \
   go test -v -count=1 ./internal/proxy -run '^TestConfiguredPolicy$'
 ```
 
-Both allowlists may be set together. To check a forbidden owner, keep the target repository the same and set `ALLOWED_USERS=someone-else`; reads should remain allowed and all writes should be blocked. To check an organisation, set `POLICY_CHECK_OWNER_TYPE=Organization` and configure `ALLOWED_ORGS` accordingly. An unset or empty `BRANCH_PREFIX` fails configuration validation. Two empty owner lists are valid and deny all writes.
+The generated policy blocks all writes. To exercise allowed writes, edit `github.allowed_users` to include `jacobfg` and `github.write_allow_repos` to include `jacobfg/permission-test`. To check a forbidden owner, change the user list to another account. For an organisation, set `POLICY_CHECK_OWNER_TYPE=Organization` and configure `github.allowed_orgs` instead. The `github.branch_prefix` must be a valid namespace ending in `/`. Empty owner lists are valid and deny all writes.
 
 The report covers 40 scenarios: reads, own/other-author issue and PR operations, allowed/forbidden PR heads, branch refs and contents, renames, repository deletion, Git fetch/push/force/delete/mixed refs/tags, and LFS download/upload. Example verdicts:
 

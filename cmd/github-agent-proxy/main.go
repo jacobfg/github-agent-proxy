@@ -33,6 +33,16 @@ func run() error {
 }
 
 func runArgs(args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "show-skill" {
+		if len(args) != 1 {
+			return fmt.Errorf("usage: github-agent-proxy show-skill")
+		}
+		_, err := io.WriteString(out, githubagentproxy.AgentSkill)
+		return err
+	}
+	if len(args) > 0 && args[0] == "install-skill" {
+		return installSkill(args[1:], out)
+	}
 	if len(args) > 0 && args[0] == "init-policy" {
 		flags := flag.NewFlagSet("init-policy", flag.ContinueOnError)
 		output := flags.String("output", "-", "output file; - writes JSON to stdout")
@@ -77,10 +87,10 @@ func runArgs(args []string, out io.Writer) error {
 		}
 		return proxy.GenerateCA(*cert, *key)
 	}
-	if len(args) != 0 {
-		return fmt.Errorf("usage: github-agent-proxy [--version | --licenses | init-policy [--output PATH] | init-ca --cert PATH --key PATH]")
+	c, err := serviceConfig(args, out)
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
 	}
-	c, err := proxy.FromEnv()
 	if err != nil {
 		return err
 	}
@@ -114,4 +124,39 @@ func runArgs(args []string, out io.Writer) error {
 		defer cancel()
 		return s.Shutdown(shutdown)
 	}
+}
+
+// serviceConfig merges flags into an environment snapshot without changing the
+// process environment. Parsing precedes policy, token and certificate reads.
+func serviceConfig(args []string, out io.Writer) (proxy.Config, error) {
+	options := proxy.RuntimeOptionsFromEnv()
+	flags := flag.NewFlagSet("github-agent-proxy", flag.ContinueOnError)
+	flags.SetOutput(out)
+	flags.Usage = func() {
+		fmt.Fprintln(out, "usage: github-agent-proxy [options]")
+		fmt.Fprintln(out, "       github-agent-proxy --version | --licenses | init-policy [--output PATH] | init-ca --cert PATH --key PATH")
+		fmt.Fprintln(out, "       github-agent-proxy install-skill --output DIR")
+		fmt.Fprintln(out, "       github-agent-proxy show-skill")
+		fmt.Fprintln(out, "Explicit flags override their environment variables. A policy file is required.")
+		flags.PrintDefaults()
+	}
+	flags.StringVar(&options.PolicyFile, "policy-file", options.PolicyFile, "JSON policy path (POLICY_FILE; required)")
+	flags.StringVar(&options.Listen, "listen-addr", options.Listen, "listener address (LISTEN_ADDR; default 127.0.0.1:8443)")
+	flags.StringVar(&options.TokenFile, "github-token-file", options.TokenFile, "PAT file path (GITHUB_TOKEN_FILE)")
+	flags.StringVar(&options.CertFile, "tls-cert-file", options.CertFile, "listener certificate path (TLS_CERT_FILE)")
+	flags.StringVar(&options.KeyFile, "tls-key-file", options.KeyFile, "listener private key path (TLS_KEY_FILE)")
+	flags.StringVar(&options.CACertFile, "intercept-ca-cert-file", options.CACertFile, "signing CA certificate path (INTERCEPT_CA_CERT_FILE)")
+	flags.StringVar(&options.CAKeyFile, "intercept-ca-key-file", options.CAKeyFile, "signing CA private key path (INTERCEPT_CA_KEY_FILE)")
+	flags.StringVar(&options.MaxPushBytes, "max-push-bytes", options.MaxPushBytes, "maximum receive-pack bytes (MAX_PUSH_BYTES; default 1073741824)")
+	flags.BoolVar(&options.AllowContainerBind, "allow-container-bind", options.AllowContainerBind, "permit a non-loopback listener in an isolated container (ALLOW_CONTAINER_BIND=1)")
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return proxy.Config{}, err
+		}
+		return proxy.Config{}, fmt.Errorf("usage: github-agent-proxy [options]: %w", err)
+	}
+	if flags.NArg() != 0 {
+		return proxy.Config{}, fmt.Errorf("usage: github-agent-proxy [options]; unexpected positional arguments")
+	}
+	return proxy.FromOptions(options)
 }
